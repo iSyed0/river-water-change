@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Pakistan Surface Water Observatory · NDMA</title>
+  <meta name="description" content="Interactive globe of surface water extent and dynamics across Pakistan, 1984–2024, from 30 m Landsat-derived JRC Global Surface Water data.">
+  <meta name="theme-color" content="#040814">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ccircle cx='16' cy='16' r='15' fill='%23040814' stroke='%2322d3ee' stroke-width='2'/%3E%3Cpath d='M16 7c4 5 6 8.4 6 11a6 6 0 0 1-12 0c0-2.6 2-6 6-11z' fill='%2322d3ee'/%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&family=Space+Grotesk:wght@500;600;700&display=swap" rel="stylesheet">
+  <link href="https://api.mapbox.com/mapbox-gl-js/v3.9.0/mapbox-gl.css" rel="stylesheet">
+  <link href="css/style.css" rel="stylesheet">
+</head>
+<body>
+  <div id="map" aria-label="Interactive globe map of Pakistan surface water"></div>
+  <div class="vignette" aria-hidden="true"></div>
+
+  <!-- Intro -->
+  <div id="intro" class="intro">
+    <div class="intro-inner">
+      <div class="intro-emblem">
+        <svg viewBox="0 0 64 64" aria-hidden="true">
+          <circle class="ring ring-a" cx="32" cy="32" r="29"/>
+          <circle class="ring ring-b" cx="32" cy="32" r="22"/>
+          <path class="drop" d="M32 15c7 9 10.5 15 10.5 19.5a10.5 10.5 0 0 1-21 0C21.5 30 25 24 32 15z"/>
+        </svg>
+      </div>
+      <div class="intro-org">National Disaster Management Authority</div>
+      <div class="intro-title">Pakistan Surface Water Observatory</div>
+      <div class="intro-status"><span class="pulse"></span><span id="intro-status">Initialising globe</span></div>
+    </div>
+  </div>
+
+  <!-- Top bar -->
+  <header class="topbar glass">
+    <div class="brand">
+      <div class="emblem">
+        <img src="img/ndma-logo.png" alt="NDMA Pakistan logo" width="160" height="162">
+      </div>
+      <div class="brand-text">
+        <div class="brand-org"><b>NDMA</b><span>National Disaster Management Authority</span></div>
+        <h1>Pakistan Surface Water Observatory</h1>
+      </div>
+    </div>
+
+    <div class="search" role="search">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+      <input id="search" type="search" placeholder="Search village, town, district or river" autocomplete="off" spellcheck="false" aria-label="Search village, town, district, province, river or canal">
+      <kbd>/</kbd>
+      <ul id="search-results" class="glass" role="listbox"></ul>
+    </div>
+
+    <nav class="tools" aria-label="Map tools">
+      <div class="seg" id="basemaps" role="radiogroup" aria-label="Basemap"></div>
+      <button class="icon-btn feature" id="btn-indus" title="Indus River 3D flythrough" aria-pressed="false">
+        <svg viewBox="0 0 24 24"><path d="m2 18 5-8 3 4 3-6 4 7"/><path d="M3 21c3-1.5 5 1 9-.5s6-2 9-.5"/></svg><span>Indus 3D</span>
+      </button>
+      <button class="icon-btn" id="btn-3d" title="3D terrain" aria-pressed="false">
+        <svg viewBox="0 0 24 24"><path d="m3 19 6-10 4 6 3-4 5 8z"/></svg><span>3D</span>
+      </button>
+      <button class="icon-btn" id="btn-spin" title="Spin globe" aria-pressed="false">
+        <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12h18M12 3c3 3.2 3 14.8 0 18M12 3c-3 3.2-3 14.8 0 18"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-home" title="Reset view to Pakistan">
+        <svg viewBox="0 0 24 24"><path d="M12 3v3M12 18v3M3 12h3M18 12h3"/><circle cx="12" cy="12" r="5"/></svg>
+      </button>
+      <button class="icon-btn" id="btn-full" title="Fullscreen">
+        <svg viewBox="0 0 24 24"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>
+      </button>
+    </nav>
+  </header>
+
+  <!-- Left: layers -->
+  <aside class="panel left glass" id="panel-layers" aria-label="Data layers">
+    <div class="panel-head">
+      <div>
+        <div class="eyebrow">Data layers</div>
+        <h2>Surface water <span class="thin">1984 – 2024</span></h2>
+      </div>
+      <button class="collapse" data-panel="panel-layers" title="Collapse panel" aria-label="Collapse layers panel">
+        <svg viewBox="0 0 24 24"><path d="m15 6-6 6 6 6"/></svg>
+      </button>
+    </div>
+    <div class="panel-body">
+      <div id="layer-list" class="layer-list"></div>
+
+      <div class="section">
+        <div class="row-between">
+          <div class="eyebrow">Layer opacity</div>
+          <output id="opacity-val" class="mono">90%</output>
+        </div>
+        <input id="opacity" type="range" min="0" max="100" value="90" aria-label="Layer opacity">
+      </div>
+
+      <div class="section">
+        <div class="eyebrow">Overlays</div>
+        <div id="overlays" class="toggles"></div>
+        <div id="ww-legend" class="ww-legend"></div>
+        <div id="bld-legend" class="choro-legend" hidden>
+          <div class="ramp"></div>
+          <div class="ramp-labels mono"><span>≤3 m</span><span>6</span><span>10</span><span>16 m+</span></div>
+          <div class="hint">Building height (estimated)</div>
+        </div>
+        <div id="bld-hint" class="hint bld-hint" hidden></div>
+        <div id="choro-legend" class="choro-legend" hidden>
+          <div class="ramp"></div>
+          <div class="ramp-labels mono"><span>0%</span><span>1%</span><span>2%</span><span>5%</span><span>10%+</span></div>
+          <div class="hint">Share of district area ever covered by water</div>
+        </div>
+      </div>
+
+      <div class="source-note">
+        Landsat-derived <b>JRC Global Surface Water v1.5</b> at 30 m, clipped to Pakistan.
+        Rivers, canals and streams: WaterWays_Pakistan.
+        Erosion and cross-sections: JRC Global Surface Water (Landsat), ESA WorldCover 2021 (Sentinel-1/2), Copernicus DEM.
+        Settlements: GeoNames and OpenStreetMap. Buildings: Google Open Buildings and OpenStreetMap, from the NDMA tile server.
+        National boundary: official Pakistan boundary; provinces and districts: geoBoundaries (gbOpen), clipped to it.
+        Click anywhere on the map to read pixel values.
+      </div>
+    </div>
+  </aside>
+
+  <!-- Right: insights -->
+  <aside class="panel right glass" id="panel-insights" aria-label="Insights">
+    <div class="panel-head">
+      <div>
+        <div class="eyebrow">Insights</div>
+        <nav id="crumbs" class="crumbs" aria-label="Scope"></nav>
+      </div>
+      <button class="collapse" data-panel="panel-insights" title="Collapse panel" aria-label="Collapse insights panel">
+        <svg viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></svg>
+      </button>
+    </div>
+    <div class="panel-body">
+      <div id="kpi-hero" class="kpi-hero"></div>
+      <div id="kpi-grid" class="kpi-grid"></div>
+
+      <div class="section">
+        <div class="row-between">
+          <div class="eyebrow">Water dynamics · 1984 → 2024</div>
+        </div>
+        <div id="composition" class="composition"></div>
+        <ul id="composition-legend" class="composition-legend"></ul>
+      </div>
+
+      <div class="section">
+        <div class="row-between">
+          <div class="eyebrow" id="rank-title">Provinces &amp; territories</div>
+        </div>
+        <div id="metric-tabs" class="tabs" role="tablist"></div>
+        <ol id="ranking" class="ranking"></ol>
+      </div>
+    </div>
+  </aside>
+
+  <!-- Mobile drawer toggles -->
+  <div class="mobile-dock glass">
+    <button data-open="panel-layers">Layers</button>
+    <button data-open="panel-insights">Insights</button>
+  </div>
+
+  <!-- Status bar -->
+  <footer class="statusbar glass">
+    <div class="zoom-group">
+      <button id="zoom-out" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button>
+      <button id="zoom-in" title="Zoom in" aria-label="Zoom in"><svg viewBox="0 0 24 24"><path d="M6 12h12M12 6v12"/></svg></button>
+      <button id="compass" title="Reset bearing" aria-label="Reset bearing"><svg viewBox="0 0 24 24"><path class="n" d="M12 3 15 12H9z"/><path class="s" d="M12 21 9 12h6z"/></svg></button>
+    </div>
+    <span class="sep"></span>
+    <span class="mono" id="coords">--.---- N &nbsp; --.---- E</span>
+    <span class="sep"></span>
+    <span class="mono" id="zoom-level">z --</span>
+    <span class="sep"></span>
+    <div class="scale"><div id="scale-bar"></div><span class="mono" id="scale-label"></span></div>
+  </footer>
+
+  <!-- Indus River 3D flythrough -->
+  <section id="tour" class="tour glass" hidden aria-label="Indus River 3D flythrough">
+    <div class="tour-top">
+      <div class="tour-title">
+        <div class="eyebrow"><span class="live"></span>Indus floodplain · 3D flythrough</div>
+        <div class="tour-place" id="tour-place">Loading route…</div>
+        <div class="tour-note" id="tour-note"></div>
+      </div>
+      <button class="icon-btn" id="tour-exit" title="Exit tour (Esc)" aria-label="Exit Indus 3D tour">
+        <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg>
+      </button>
+    </div>
+    <dl class="tour-stats">
+      <div><dt>Along the river</dt><dd class="mono" id="tour-km">—</dd></div>
+      <div><dt>River level</dt><dd class="mono" id="tour-elev">—</dd></div>
+      <div><dt>Banks</dt><dd id="tour-dist">—</dd></div>
+      <div><dt>Floodplain width</dt><dd class="mono" id="tour-water">—</dd></div>
+    </dl>
+    <div class="tour-track">
+      <input id="tour-progress" type="range" min="0" max="1" step="1" value="0" aria-label="Position along the Indus">
+      <div id="tour-ticks" class="tour-ticks"></div>
+    </div>
+    <div class="tour-controls">
+      <button class="icon-btn" id="tour-prev" title="Previous landmark (←)" aria-label="Previous landmark">
+        <svg viewBox="0 0 24 24"><path d="M6 5v14M19 5 9 12l10 7z"/></svg>
+      </button>
+      <button class="icon-btn play" id="tour-play" title="Fly / pause (Space)" aria-pressed="false">
+        <svg class="i-play" viewBox="0 0 24 24"><path d="M7 4.5v15l12-7.5z"/></svg>
+        <svg class="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14"/></svg><span>Fly</span>
+      </button>
+      <button class="icon-btn" id="tour-next" title="Next landmark (→)" aria-label="Next landmark">
+        <svg viewBox="0 0 24 24"><path d="M18 5v14M5 5l10 7-10 7z"/></svg>
+      </button>
+      <button class="icon-btn" id="tour-orbit" title="Orbit 360° around this point (O)" aria-pressed="false">
+        <svg viewBox="0 0 24 24"><ellipse cx="12" cy="13" rx="9" ry="4.5"/><path d="M12 4v9"/><path d="m18.5 8.5 1.8 1.6-2.3.8"/></svg><span>360°</span>
+      </button>
+      <button class="icon-btn" id="tour-sec" title="Show or hide the cross-section" aria-pressed="true">
+        <svg viewBox="0 0 24 24"><path d="M3 8c3 0 4 9 9 9s6-9 9-9"/><path d="M3 20h18"/></svg><span>Section</span>
+      </button>
+      <button class="icon-btn" id="tour-tab" title="Show or hide the area data table" aria-pressed="true">
+        <svg viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 10h16M10 10v9"/></svg><span>Table</span>
+      </button>
+      <div class="seg" id="tour-speed" role="radiogroup" aria-label="Flight speed"></div>
+    </div>
+  </section>
+
+  <!-- Floodplain: cross-section chart (left) and area table (right), shown during the flythrough -->
+  <aside id="fp-section" class="fp-panel fp-left glass" hidden aria-label="River cross-section">
+    <div class="fp-head">
+      <div class="eyebrow">River cross-section · looking downstream</div>
+      <div class="fp-title" id="fp-sec-title">—</div>
+      <div class="fp-sub" id="fp-sec-sub"></div>
+    </div>
+    <div class="fp-chart" id="fp-chart"></div>
+    <div class="fp-chart-tip" id="fp-chart-tip" hidden></div>
+    <div class="fp-stats" id="fp-sec-stats"></div>
+    <div class="fp-legend" id="fp-legend"></div>
+    <details class="fp-notes">
+      <summary>How to read this</summary>
+      <p id="fp-notes-text"></p>
+    </details>
+  </aside>
+  <aside id="fp-table" class="fp-panel fp-right glass" hidden aria-label="Area data">
+    <div class="fp-head fp-head-row">
+      <div>
+        <div class="eyebrow">Area data · updates as you fly</div>
+        <div class="fp-title" id="fp-tab-title">—</div>
+      </div>
+      <button class="fp-btn" id="fp-all-open">All areas</button>
+    </div>
+    <div class="fp-table-wrap" id="fp-table-wrap"></div>
+  </aside>
+  <div id="fp-all" class="fp-all" hidden role="dialog" aria-modal="true" aria-labelledby="fp-all-title">
+    <div class="fp-all-box glass">
+      <div class="fp-head fp-head-row">
+        <div>
+          <div class="eyebrow">Indus floodplain</div>
+          <div class="fp-title" id="fp-all-title">All areas</div>
+        </div>
+        <div class="fp-all-tools">
+          <div class="seg" id="fp-all-mode" role="radiogroup" aria-label="Group by"></div>
+          <button class="fp-btn" id="fp-all-csv">Download CSV</button>
+          <button class="icon-btn" id="fp-all-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+        </div>
+      </div>
+      <div class="fp-all-wrap" id="fp-all-wrap"></div>
+    </div>
+  </div>
+
+  <div id="hover-tip" class="hover-tip" hidden></div>
+
+  <script src="https://api.mapbox.com/mapbox-gl-js/v3.9.0/mapbox-gl.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

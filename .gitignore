@@ -1,0 +1,19 @@
+# JRC source rasters: public downloads, about 920 MB. The rendered tiles in portal/tiles are kept.
+/change/
+/extent/
+/occurrence/
+/recurrence/
+/seasonality/
+/transitions/
+
+# Downloads and build caches, about 1.7 GB; recreated by the scripts
+/build/
+/osm_src/
+
+# Not used by the portal
+/rivers/
+/GEE indus erosion/
+
+__pycache__/
+*.pyc
+desktop.ini

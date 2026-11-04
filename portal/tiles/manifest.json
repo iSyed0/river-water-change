@@ -1,0 +1,19 @@
+{
+  "minzoom": 0,
+  "maxzoom": 12,
+  "bounds": [
+    60.87174689200003,
+    23.81095778300005,
+    79.30735174000006,
+    37.09108839100003
+  ],
+  "layers": [
+    "extent",
+    "occurrence",
+    "recurrence",
+    "seasonality",
+    "change",
+    "transitions",
+    "erosion"
+  ]
+}
