@@ -17,6 +17,20 @@ BOUNDARIES = ROOT / "boundaries_src"
 NATIONAL = BOUNDARIES / "Pakistan_National.geojson"
 NATIONAL_NAME_FIELD = "Admin01_Na"
 
+# Provinces, districts and tehsils, in full detail.
+ADMIN = ROOT / "boundries"
+
+
+def read_admin(name, field):
+    """(names, valid polygons) of a file in ADMIN. These files also hold IIOJK as a unit: it is left out here
+    because the portal draws it as disputed territory, from NATIONAL. Import floodplain_common first."""
+    import pyogrio
+    import shapely
+
+    df = pyogrio.read_dataframe(ADMIN / f"{name}.geojson", columns=[field])
+    df = df[~df[field].str.contains("Occupied")]
+    return [str(v).strip() for v in df[field]], shapely.make_valid(df.geometry.values)
+
 
 def national_boundary():
     """Return (pakistan_geometry, [(name, disputed_geometry), ...]) from NATIONAL."""
@@ -139,6 +153,25 @@ LAYERS["erosion"] = {
                4: _hex("#1aa878"),   # seasonal water -> land
                5: _hex("#3987e5"),   # water in both years
                6: _hex("#7b8494")},  # wet at times, no lasting change
+}
+
+# Written by prepare_water_types.py. Lightness as well as hue keeps all five apart on the map, colour-blind included.
+LAYERS["watertype"] = {
+    "reduce": "mode",
+    "colors": {1: _hex("#2f6fd6"),   # river or canal
+               2: _hex("#9fd3ff"),   # lake or reservoir
+               3: _hex("#d95926"),   # seasonal water near a river
+               4: _hex("#f2c94c"),   # seasonal water away from rivers
+               5: _hex("#14a37f")},  # coast and tidal water
+}
+
+# Tiles written by prepare_land_change.py, not by build_tiles.py
+LAYERS["landloss"] = {
+    "separate_tiles": True,
+    "reduce": "mode",
+    "colors": {1: _hex("#d95926"),   # land lost to the river
+               2: _hex("#199e70"),   # land deposited
+               3: _hex("#3987e5")},  # water in both
 }
 
 TILE = 256

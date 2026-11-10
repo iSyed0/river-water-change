@@ -2,7 +2,8 @@
 
 Areas come from pixel counts weighted by the true area of each 0.00025 deg pixel at
 its latitude. National totals use the official national boundary (common.NATIONAL);
-province and district totals use geoBoundaries. Output: portal/data/stats.json
+province and district totals add up the districts in portal/data/districts.geojson, from
+prepare_boundaries.py. Output: portal/data/stats.json
 
     python scripts/compute_stats.py
 """
@@ -23,7 +24,7 @@ from rasterio import features
 from rasterio.windows import Window
 from shapely.geometry import box, shape
 
-from common import (BOUNDARIES, DATA_OUT, GRANULE, GRANULES, LAT0, LON0, RES, TRANSITION_CLASSES, granule_path,
+from common import (DATA_OUT, GRANULE, GRANULES, LAT0, LON0, RES, TRANSITION_CLASSES, granule_path,
                     national_boundary)
 
 EARTH_R_KM = 6371.0088
@@ -93,13 +94,10 @@ def main():
     args = ap.parse_args()
     t = time.time()
 
-    feats = sorted(json.loads((BOUNDARIES / "pak_ADM2_full.geojson").read_text(encoding="utf-8"))["features"],
-                   key=lambda f: f["properties"]["shapeName"])
-    web = json.loads((DATA_OUT / "districts.geojson").read_text(encoding="utf-8"))["features"]
-    province_of = {f["properties"]["id"]: f["properties"]["province"] for f in web}
+    feats = json.loads((DATA_OUT / "districts.geojson").read_text(encoding="utf-8"))["features"]
+    province_of = {f["properties"]["id"]: f["properties"]["province"] for f in feats}
     national_geom, _ = national_boundary()
-    # geoBoundaries units run offshore; trim them to the official national boundary
-    geoms = [shape(f["geometry"]).intersection(national_geom) for f in feats]
+    geoms = [shape(f["geometry"]) for f in feats]
     shapes = [(g, i) for i, g in enumerate(geoms, start=1) if not g.is_empty]
     b = np.array([g.bounds for g in geoms] + [national_geom.bounds])
     union_bounds = box(b[:, 0].min(), b[:, 1].min(), b[:, 2].max(), b[:, 3].max())
@@ -130,7 +128,7 @@ def main():
     for i, (f, g) in enumerate(zip(feats, geoms), start=1):
         land = abs(geod.geometry_area_perimeter(g)[0]) / 1e6
         prov = province_of[i]
-        districts.append({"id": i, "name": f["properties"]["shapeName"], "province": prov,
+        districts.append({"id": i, "name": f["properties"]["name"], "province": prov,
                           "area_km2": round(land, 1), **summarise(cls[i], ext[i])})
         p = provinces.setdefault(prov, {"cls": np.zeros(NCLS), "ext": 0.0, "area": 0.0, "n": 0})
         p["cls"] += cls[i]
@@ -146,7 +144,7 @@ def main():
 
     out = {
         "source": "JRC Global Surface Water v1.5 (1984-2024), 30 m",
-        "boundaries": "National: official boundary (Pakistan_National.geojson); provinces/districts: geoBoundaries gbOpen",
+        "boundaries": "National: official boundary (Pakistan_National.geojson); provinces/districts: files in boundries/",
         "classes": {str(k): v[0] for k, v in TRANSITION_CLASSES.items()},
         "derived": {k: v for k, v in DERIVED.items()},
         "national": national,

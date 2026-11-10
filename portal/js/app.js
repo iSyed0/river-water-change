@@ -38,31 +38,73 @@
     basemap: 'night',
     terrain: false,
     spin: false,
-    overlays: { focus: true, rivers: true, buildings: true, provinces: true, districts: false, choropleth: false, labels: true, borders: false },
+    overlays: { focus: true, rivers: true, erosionDots: true, buildings: true, provinces: true, districts: true, tehsils: true, choropleth: false, labels: true, borders: false },
     scope: { level: 'national' }, // | { level: 'province', name } | { level: 'district', id }
     river: null, // name of a waterway picked from search
     place: null, // village/town picked from search, pinned on the map
     metric: 'extent_km2',
+    highlight: false, // the map shows the metric above, in the selected region, instead of the data layer
+    waterTypes: new Set(), // water types (1-5) painted over whichever layer is showing
+    month: '2010_08', // shown by the Monthly Water layer
+    year: '2010', // shown by the Yearly Water layer
   };
 
   const OVERLAYS = [
     { id: 'focus', label: 'Focus on Pakistan', icon: '<circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="3"/>' },
     { id: 'rivers', label: 'Rivers & canals', icon: '<path d="M3 8c3-2 5 2 9 0s6-2 9 0M3 14c3-2 5 2 9 0s6-2 9 0"/>' },
+    { id: 'erosionDots', label: 'Eroded or newly wet', icon: '<circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/>' },
     { id: 'buildings', label: 'Buildings', icon: '<path d="M4 20V9l6-4 6 4v11M16 20v-7h4v7M3 20h18M8 12h4M8 16h4"/>' },
     { id: 'provinces', label: 'Province boundaries', icon: '<path d="M4 6l5-2 6 2 5-2v14l-5 2-6-2-5 2z"/><path d="M9 4v14M15 6v14"/>' },
     { id: 'districts', label: 'District boundaries', icon: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 12h16M12 4v16"/>' },
+    { id: 'tehsils', label: 'Tehsil boundaries', icon: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9.3h16M4 14.6h16M9.3 4v16M14.6 4v16"/>' },
     { id: 'choropleth', label: 'District water index', icon: '<path d="M5 20V11M11 20V5M17 20v-6M3 20h18"/>' },
     { id: 'labels', label: 'Place labels', icon: '<path d="M5 7V5h14v2M9 19h6M12 5v14"/>' },
     { id: 'borders', label: 'Basemap borders', icon: '<path d="M3 12h3M9 12h3M15 12h3M21 12h0"/><path d="M12 3v18"/>' },
   ];
 
+  const DATA_LAYERS = CFG.layers.filter((L) => !L.overlay);
+  const PIXEL_LAYERS = CFG.layers.filter((L) => !L.timeline); // their tiles encode values as palette colours
+
+  // Monthly Water: tile channel values are 1 not seen, 2 dry, 3-102 usual water, 103-202 water above usual (2 + or 102 + the % of the cell)
+  const MONTHLY = { usual: '#38bdf8', above: '#f97316', unseen: 'rgba(148, 163, 184, 0.55)' };
+  const MONTH_NAMES = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
+  const MONTHLY_PLOT_SEEN = 50; // % of a region seen before a month or year is charted
+  const YEARLY = { permanent: '#258cff', seasonal: '#a5b4dc', above: '#f97316', unseen: 'rgba(148, 163, 184, 0.55)' };
+  const yearlyUrl = () => `${BASE}${CFG.tilesPath}/yearly/${state.year}/{z}/{x}/{y}.png`;
+  const monthLabel = (key) => `${MONTH_NAMES[Number(key.slice(5)) - 1]} ${key.slice(0, 4)}`;
+  const monthlyUrl = () => {
+    const [y, m] = state.month.split('_').map(Number);
+    return `${BASE}${CFG.tilesPath}/monthly/${y}_Q${Math.ceil(m / 3)}/{z}/{x}/{y}.png`;
+  };
+  const monthChannel = () => [0, 1, 2].map((c) => Number(c === (Number(state.month.slice(5)) - 1) % 3)).concat(0);
+  function monthlyColorMap() {
+    const v = (byte) => byte / 255;
+    const clear = 'rgba(0, 0, 0, 0)';
+    return ['interpolate', ['linear'], ['raster-value'],
+      0, clear, v(1), MONTHLY.unseen, v(2), clear,
+      v(3), 'rgba(56, 189, 248, 0.4)', v(102), 'rgba(56, 189, 248, 1)',
+      v(103), 'rgba(249, 115, 22, 0.55)', v(202), 'rgba(249, 115, 22, 1)', v(203), clear];
+  }
+  const WATER_TYPES = CFG.layers.find((L) => L.id === 'watertype');
+  const WATER_TYPE_OPACITY = 0.85;
+
   const METRICS = [
-    { key: 'extent_km2', label: 'Extent', color: '#22d3ee' },
-    { key: 'permanent_km2', label: 'Permanent', color: '#3b82f6' },
-    { key: 'seasonal_km2', label: 'Seasonal', color: '#7dd3fc' },
-    { key: 'gained_km2', label: 'Gained', color: '#34d399' },
-    { key: 'lost_km2', label: 'Lost', color: '#fb7185' },
+    { key: 'extent_km2', label: 'Extent', name: 'Maximum water extent', color: '#22d3ee', when: 'Wet at least once at any time in 1984–2024' },
+    { key: 'permanent_km2', label: 'Permanent', name: 'Permanent water', color: '#3b82f6', derived: 'permanent', when: 'Water all year in 2024' },
+    { key: 'seasonal_km2', label: 'Seasonal', name: 'Seasonal water', color: '#7dd3fc', derived: 'seasonal', when: 'Water for part of 2024' },
+    { key: 'gained_km2', label: 'Gained', name: 'Water gained', color: '#34d399', derived: 'gained', when: 'No water in 1984, water in 2024' },
+    { key: 'lost_km2', label: 'Lost', name: 'Water lost', color: '#fb7185', derived: 'lost', when: 'Water in 1984, no water in 2024' },
   ];
+
+  // Transition and water type tiles hold each class as a colour. This mix turns each palette's colours into values
+  // at least 0.046 apart, and semi-transparent pixels round by less than 0.014, so a band of 0.02 finds one class only.
+  const CLASS_MIX = [-0.1, 0.3, 0.75];
+  const CLASS_BAND = 0.02;
+  function classColorMap(classColors, palette = D.palettes.transitions) {
+    const clear = 'rgba(0, 0, 0, 0)';
+    const bands = classColors.map(([c, color]) => [palette[c].reduce((sum, v, i) => sum + (v / 255) * CLASS_MIX[i], 0), color]).sort((a, b) => a[0] - b[0]);
+    return ['step', ['raster-value'], clear, ...bands.flatMap(([v, color]) => [v - CLASS_BAND, color, v + CLASS_BAND, clear])];
+  }
 
   // Waterway classes from scripts/prepare_rivers.py
   const WATERWAYS = {
@@ -161,8 +203,10 @@
     getJSON('data/waterways_labels.geojson'),
     getJSON('data/places_major.geojson'),
     getJSON(`${CFG.tilesPath}/manifest.json`),
-  ]).then(([palettes, stats, pakistan, provinces, districts, disputed, disputedBorder, outlineLowres, waterways, waterwayLabels, placesMajor, manifest]) => {
-    Object.assign(D, { palettes, stats, pakistan, provinces, districts, disputed, disputedBorder, outlineLowres, waterways, waterwayLabels, placesMajor, manifest });
+    getJSON('data/erosion_dots.geojson').catch(() => null),
+    getJSON('data/water_types.json'),
+  ]).then(([palettes, stats, pakistan, provinces, districts, disputed, disputedBorder, outlineLowres, waterways, waterwayLabels, placesMajor, manifest, erosionDots, waterTypes]) => {
+    Object.assign(D, { palettes, stats, pakistan, provinces, districts, disputed, disputedBorder, outlineLowres, waterways, waterwayLabels, placesMajor, manifest, erosionDots });
     D.rivers = riverIndex(waterways);
     D.provStats = new Map(stats.provinces.map((p) => [p.name, p]));
     D.distStats = new Map(stats.districts.map((d) => [d.id, d]));
@@ -177,11 +221,27 @@
     D.distLabels = labelPoints(districts);
     D.disputedLabels = labelPoints(disputed);
     D.lookup = buildLookups(palettes);
+    D.waterTypes = waterTypes;
+    D.dotInfo = new Map((erosionDots?.features || []).map((f) => [f.properties.id, f.properties]));
     return D;
   });
 
   // Floodplain infrastructure marks, on the map and on the cross-section chart
   const FP_MARKS = { road: '#f8fafc', rail: '#fde047', bridge: '#f8fafc', dam: '#9085e9', school: '#c98500', health: '#d55181' };
+
+  // Erosion dots: area sets the size, so radius follows the square root of km². Fades out between these zooms.
+  // The dots are redrawn for each whole zoom from DOT_LEVELS[0] to DOT_LEVELS[1] (prepare_erosion_dots.py).
+  const DOTS_ZOOM = [8.5, 10];
+  const DOT_LEVELS = [4, 9];
+  const DOT_COLOR = '#d95926';
+  const DOT_BLINK_MS = 1600;     // matches dot-blink in style.css
+  const DOT_RADIUS = [[0, 4], [5, 9], [30, 20]];    // sqrt(km²) -> px
+  const dotRadiusAt = (km2) => {
+    const s = Math.sqrt(km2);
+    const i = s < DOT_RADIUS[1][0] ? 0 : 1;
+    const [[x0, y0], [x1, y1]] = [DOT_RADIUS[i], DOT_RADIUS[i + 1]];
+    return y0 + (Math.min(s, x1) - x0) * (y1 - y0) / (x1 - x0);
+  };
 
   // ------------------------------------------------------------------ places
   const PLACE_KINDS = { city: 'City', town: 'Town', village: 'Village', hamlet: 'Hamlet', locality: 'Locality' };
@@ -313,15 +373,41 @@
     add({ id: 'selection-fill', type: 'fill', source: 'selection', paint: { 'fill-color': '#fde68a', 'fill-opacity': 0.05 } }, before);
 
     for (const L of CFG.layers) {
+      if (L.timeline) {
+        const monthly = L.timeline === 'month';
+        map.addSource(`gsw-${L.id}`, {
+          type: 'raster', tiles: [monthly ? monthlyUrl() : yearlyUrl()], tileSize: 256, minzoom: 4, maxzoom: 9, bounds,
+          attribution: 'Water by month and year: EC JRC / Google Global Surface Water Monthly History v1.4',
+        });
+        const paint = { 'raster-opacity': state.opacity, 'raster-fade-duration': 0, 'raster-resampling': 'nearest' };
+        if (monthly) Object.assign(paint, { 'raster-color-mix': monthChannel(), 'raster-color-range': [0, 1], 'raster-color': monthlyColorMap() });
+        add({ id: `gsw-${L.id}`, type: 'raster', source: `gsw-${L.id}`, layout: { visibility: 'none' }, paint }, before);
+        continue;
+      }
       map.addSource(`gsw-${L.id}`, {
-        type: 'raster', tiles: [tileUrl(L.id)], tileSize: 256, minzoom: 0, maxzoom: CFG.tileMaxZoom, bounds,
+        type: 'raster', tiles: [tileUrl(L.id)], tileSize: 256, minzoom: 0, maxzoom: L.maxzoom || CFG.tileMaxZoom, bounds,
         attribution: 'Water: EC JRC / Google Global Surface Water v1.5',
       });
+      if (L.overlay) continue;
       add({
         id: `gsw-${L.id}`, type: 'raster', source: `gsw-${L.id}`, layout: { visibility: 'none' },
         paint: { 'raster-opacity': state.opacity, 'raster-fade-duration': 200, 'raster-resampling': resampling() },
       }, before);
     }
+
+    // One tab of the insights panel on the map. Nearest resampling and no fade: blending two classes would read as a third.
+    const highlightPaint = { 'raster-opacity': state.opacity, 'raster-fade-duration': 0, 'raster-resampling': 'nearest' };
+    add({ id: 'highlight-extent', type: 'raster', source: 'gsw-extent', layout: { visibility: 'none' }, paint: highlightPaint }, before);
+    add({
+      id: 'highlight-classes', type: 'raster', source: 'gsw-transitions', layout: { visibility: 'none' },
+      paint: { ...highlightPaint, 'raster-color-mix': [...CLASS_MIX, 0], 'raster-color-range': [0, 1], 'raster-color': classColorMap([[1, '#fff']]) },
+    }, before);
+
+    // The water types switched on, over whichever layer is showing
+    add({
+      id: 'water-types', type: 'raster', source: 'gsw-watertype', layout: { visibility: 'none' },
+      paint: { ...highlightPaint, 'raster-opacity': WATER_TYPE_OPACITY, 'raster-color-mix': [...CLASS_MIX, 0], 'raster-color-range': [0, 1], 'raster-color': classColorMap([[1, '#fff']], D.palettes.watertype) },
+    }, before);
 
     // Waterways sit above the water layers so channels stay readable over flooded ground
     map.addSource('waterways-minor', { type: 'geojson', data: D.minor || EMPTY });
@@ -368,6 +454,15 @@
     add({
       id: 'districts-hover', type: 'line', source: 'districts',
       paint: { 'line-color': '#e0f2fe', 'line-width': 1.6, 'line-opacity': ['case', ['boolean', ['feature-state', 'hover'], false], 0.85, 0] },
+    }, before);
+
+    map.addSource('highlight-mask', { type: 'geojson', data: EMPTY });
+    add({ id: 'highlight-dim', type: 'fill', source: 'highlight-mask', layout: { visibility: 'none' }, paint: { 'fill-color': '#020611', 'fill-opacity': 0.78 } }, before);
+
+    map.addSource('tehsils', { type: 'geojson', data: D.units || EMPTY });
+    add({
+      id: 'tehsils-line', type: 'line', source: 'tehsils', minzoom: TEHSIL_ZOOM,
+      paint: { 'line-color': '#93c5fd', 'line-opacity': 0.32, 'line-width': ['interpolate', ['linear'], ['zoom'], 7.5, 0.5, 12, 1.1], 'line-dasharray': [1, 1.6] },
     }, before);
 
     map.addSource('provinces', { type: 'geojson', data: D.provinces });
@@ -434,6 +529,18 @@
       id: 'fp-rail', type: 'line', source: 'fp-infra', filter: ['all', ['==', ['geometry-type'], 'LineString'], ['==', ['get', 'kind'], 'rail']],
       layout: { visibility: 'none' },
       paint: { 'line-color': FP_MARKS.rail, 'line-width': ['interpolate', ['linear'], ['zoom'], 8, 1.2, 12, 2.6], 'line-dasharray': [2.2, 1.4] },
+    }, before);
+
+    // Eroded or newly wet ground as blinking dots while its pixels are too small to see
+    map.addSource('erosion-dots', { type: 'geojson', data: D.erosionDots || EMPTY });
+    // Steady and dim on the map: the blink is an element on top (syncPulses), so the map need not redraw for it
+    const dotOpacity = ['interpolate', ['linear'], ['zoom'], DOTS_ZOOM[0], reducedMotion ? 1 : 0.4, DOTS_ZOOM[1], 0];
+    add({
+      id: 'erosion-dot', type: 'circle', source: 'erosion-dots', maxzoom: DOTS_ZOOM[1],
+      paint: {
+        'circle-color': DOT_COLOR, 'circle-stroke-color': '#f8fafc', 'circle-stroke-width': 1.2, 'circle-opacity': dotOpacity, 'circle-stroke-opacity': dotOpacity,
+        'circle-radius': ['interpolate', ['linear'], ['sqrt', ['get', 'km2']], ...DOT_RADIUS.flat()],
+      },
     }, before);
 
     const textPaint = { 'text-color': '#dbe4f3', 'text-halo-color': 'rgba(2, 6, 17, 0.85)', 'text-halo-width': 1.4 };
@@ -514,6 +621,48 @@
       });
     }
 
+    // Above the village names, which would otherwise leave no room for a tehsil name
+    map.addSource('tehsil-labels', { type: 'geojson', data: D.units ? labelPoints(D.units) : EMPTY });
+    add({
+      id: 'tehsil-labels', type: 'symbol', source: 'tehsil-labels', minzoom: 9,
+      layout: { 'text-field': ['concat', ['get', 'name'], ' tehsil'], 'text-font': font, 'text-size': 11.5, 'text-max-width': 9 },
+      paint: { ...textPaint, 'text-color': '#bfdbfe' },
+    });
+
+    add({
+      id: 'erosion-label', type: 'symbol', source: 'erosion-dots', maxzoom: DOTS_ZOOM[1],
+      layout: {
+        'text-field': ['format', ['get', 'name'], {}, '\n', {}, ['get', 'sub'], { 'font-scale': 0.86 }],
+        'text-font': font, 'text-size': 12, 'text-max-width': 24, 'symbol-sort-key': ['-', 0, ['get', 'bld']],
+        // A fixed anchor: variable anchors do not draw while the map is still a globe, below about zoom 6
+        'text-anchor': 'left', 'text-justify': 'left', 'text-radial-offset': ['interpolate', ['linear'], ['sqrt', ['get', 'km2']], 0, 0.6, 30, 1.9],
+      },
+      paint: {
+        'text-color': '#f8fafc', 'text-halo-color': 'rgba(2, 6, 17, 0.92)', 'text-halo-width': 1.5,
+        'text-opacity': ['interpolate', ['linear'], ['zoom'], DOTS_ZOOM[0], 1, DOTS_ZOOM[1], 0],
+      },
+    });
+
+    map.addSource('dot-pins', { type: 'geojson', data: EMPTY });
+    add({
+      id: 'dot-pin', type: 'circle', source: 'dot-pins',
+      paint: { 'circle-radius': 5, 'circle-color': '#fde047', 'circle-stroke-color': '#020611', 'circle-stroke-width': 1.5 },
+    });
+    add({
+      id: 'dot-pin-label', type: 'symbol', source: 'dot-pins',
+      layout: {
+        'text-field': ['get', 'label'], 'text-font': font, 'text-size': 12, 'text-max-width': 18,
+        'text-anchor': 'left', 'text-justify': 'left', 'text-radial-offset': 0.7,
+      },
+      paint: { 'text-color': '#fde047', 'text-halo-color': 'rgba(2, 6, 17, 0.95)', 'text-halo-width': 1.6 },
+    });
+
+    map.addSource('unit-outline', { type: 'geojson', data: EMPTY });
+    add({
+      id: 'unit-line', type: 'line', source: 'unit-outline', layout: { 'line-join': 'round' },
+      paint: { 'line-color': '#fde047', 'line-width': 2.2, 'line-opacity': 0.95 },
+    });
+
     map.addSource('place-pin', { type: 'geojson', data: EMPTY });
     add({
       id: 'place-pin-halo', type: 'circle', source: 'place-pin',
@@ -571,16 +720,359 @@
 
   const resampling = () => (map.getZoom() >= 11 ? 'nearest' : 'linear');
 
+  // The blink: one element per dot in view, animated by the browser alone. Redrawing the map for it kept the whole
+  // map busy, even when nothing moved.
+  const dotsOn = () => state.overlays.erosionDots && !tour.on && map.getZoom() < DOTS_ZOOM[1] && !!map.getLayer('erosion-dot');
+  const dotPulses = new Map();
+  let dotLevel = null;
+
+  function syncPulses() {
+    const want = new Map();
+    if (!reducedMotion && dotsOn()) {
+      const b = map.getBounds();
+      for (const f of D.erosionDots?.features || []) {
+        if (f.properties.z === dotLevel && b.contains(f.geometry.coordinates)) want.set(f.properties.id, f);
+      }
+    }
+    for (const [id, marker] of dotPulses) {
+      if (!want.has(id)) { marker.remove(); dotPulses.delete(id); }
+    }
+    for (const [id, f] of want) {
+      if (dotPulses.has(id)) continue;
+      const r = dotRadiusAt(f.properties.km2);
+      const node = el('div', { class: 'dot-pulse', 'aria-hidden': 'true' },
+        `<span><i style="--d:${(2 * r + 2.4).toFixed(1)}px;--h:${(0.6 * r).toFixed(1)}px;animation-delay:${-(performance.now() % DOT_BLINK_MS).toFixed(0)}ms"></i></span>`);
+      dotPulses.set(id, new mapboxgl.Marker({ element: node, occludedOpacity: 0 }).setLngLat(f.geometry.coordinates).addTo(map));
+    }
+  }
+
+  function syncDots() {
+    if (!dotsOn()) {
+      if (dotPulses.size) syncPulses();
+      return;
+    }
+    map.getContainer().style.setProperty('--dot-fade', Math.min(1, (DOTS_ZOOM[1] - map.getZoom()) / (DOTS_ZOOM[1] - DOTS_ZOOM[0])).toFixed(3));
+    const level = Math.max(DOT_LEVELS[0], Math.min(DOT_LEVELS[1], Math.floor(map.getZoom())));
+    if (level === dotLevel) return;
+    dotLevel = level;
+    for (const id of ['erosion-dot', 'erosion-label']) map.setFilter(id, ['==', ['get', 'z'], level]);
+    syncPulses();
+  }
+
   function setVis(id, on) {
     if (map.getLayer(id)) map.setLayoutProperty(id, 'visibility', on ? 'visible' : 'none');
   }
 
   function applyLayer() {
-    for (const L of CFG.layers) setVis(`gsw-${L.id}`, L.id === state.layer);
+    const on = state.highlight && !tour.on;
+    const m = METRICS.find((x) => x.key === state.metric);
+    for (const L of DATA_LAYERS) setVis(`gsw-${L.id}`, !on && L.id === state.layer);
+    const kind = !on && !tour.on ? tlKind() : null;
+    $('#timebar').hidden = !kind;
+    document.body.classList.toggle('timeline-on', !!kind);
+    $('#monthly-section').hidden = !(kind && D.tl[kind]);
+    if (kind) {
+      ensureTimeline(kind).then(() => {
+        if (tlKind() !== kind) return;
+        $('#monthly-section').hidden = false;
+        buildTimebar();
+        renderTimebar();
+        renderTimelineChart();
+        renderTimeChip();
+      });
+    }
+    setVis('highlight-extent', on && !m.derived);
+    setVis('highlight-classes', on && !!m.derived);
+    setVis('highlight-dim', on && !!scopeFeature());
+    if (on && m.derived && map.getLayer('highlight-classes')) map.setPaintProperty('highlight-classes', 'raster-color', classColorMap(D.stats.derived[m.derived].map((c) => [c, m.color])));
+    for (const c of $('#layer-list').children) c.setAttribute('aria-checked', String(!on && c.dataset.id === state.layer));
+    renderTimeChip();
+
+    const note = $('#highlight-note');
+    note.hidden = !on;
+    if (!on) return;
+    const rec = scopeRecord();
+    note.innerHTML = `<i style="background:${m.color}"></i><span><b>${esc(m.name)}</b> in ${esc(rec.name)}: ${fmtArea(rec[m.key])} km²</span><button type="button">Back to data layer</button>`;
+    note.querySelector('button').addEventListener('click', () => { state.highlight = false; applyLayer(); });
+  }
+
+  // What the map shows now, and the period it covers
+  function renderTimeChip() {
+    const shown = state.highlight && !tour.on ? METRICS.find((x) => x.key === state.metric) : CFG.layers.find((l) => l.id === state.layer);
+    const line = (L) => `<div><b>${esc(L.name)}</b> ${esc(L.timeline ? timeWhen(L.timeline) : L.when)}</div>`;
+    $('#time-chip').innerHTML = line(shown) + (state.waterTypes.size ? line(WATER_TYPES) : '');
+  }
+
+  // ------------------------------------------------------------------ monthly and yearly water
+  // The two timeline layers share the bar under the map and the chart in the Insights panel.
+  const TIMELINES = {
+    month: {
+      layer: 'monthly', file: 'data/timeline.json', keys: (t) => t.months, label: monthLabel, stateKey: 'month',
+      tick: (y) => `${y}_01`, unit: 'month', title: 'Monthly water',
+      key: [[MONTHLY.usual, 'Usual'], [MONTHLY.above, 'Above usual'], [MONTHLY.unseen, 'Not seen']],
+      legend: [['line', MONTHLY.usual, 'Water seen'], ['dash', '#94a3b8', 'Usual for the month'], ['bar', MONTHLY.above, 'Above usual']],
+      hint: 'Drawn only for months when at least half the area was seen; gaps are cloud or missing images. Usual is the median for the same calendar month in 2000–2021, on the ground seen that month. Click the chart to show that month on the map.',
+    },
+    year: {
+      layer: 'yearly', file: 'data/timeline_years.json', keys: (t) => t.years.map(String), label: (k) => k, stateKey: 'year',
+      tick: (y) => String(y), unit: 'year', title: 'Yearly water',
+      key: [[YEARLY.permanent, 'Permanent'], [YEARLY.seasonal, 'Seasonal'], [YEARLY.above, 'Above usual'], [YEARLY.unseen, 'Not seen']],
+      legend: [['bar', YEARLY.permanent, 'Permanent: rivers, canals, lakes'], ['bar', YEARLY.seasonal, 'Seasonal'], ['bar', YEARLY.above, 'Seasonal, well above usual']],
+      hint: 'Water area as ground under water in its wet months. Years when less than half the area was seen in three or more months are faint. Click a bar to show that year on the map.',
+    },
+  };
+  const tlKind = () => CFG.layers.find((l) => l.id === state.layer)?.timeline || null;
+  D.tl = {};
+
+  const timelineReq = {};
+  function ensureTimeline(kind) {
+    const T = TIMELINES[kind];
+    timelineReq[kind] ||= getJSON(T.file).then((data) => {
+      const keys = T.keys(data);
+      D.tl[kind] = { data, keys, index: new Map(keys.map((k, i) => [k, i])) };
+      if (!D.tl[kind].index.has(state[T.stateKey])) state[T.stateKey] = keys[keys.length - 1];
+    }).catch((err) => { timelineReq[kind] = null; console.error(err); });
+    return timelineReq[kind];
+  }
+
+  function scopeTimeline(kind) {
+    const t = D.tl[kind].data;
+    const s = state.scope;
+    if (s.level === 'province') return t.provinces[s.name];
+    if (s.level === 'district') return t.districts[s.id];
+    return t.national;
+  }
+
+  function timeWhen(kind) {
+    const T = TIMELINES[kind];
+    const key = state[T.stateKey];
+    const tl = D.tl[kind];
+    const i = tl?.index.get(key);
+    const seen = i === undefined ? null : tl.data.national[i][3];
+    if (kind === 'month') return `${monthLabel(key)} only.${seen === null ? '' : ` ${Math.round(seen)}% of Pakistan seen by the satellite.`}`;
+    return `${key} only.${seen === null ? '' : ` ${Math.round(seen)}% of Pakistan seen in three or more months.`}`;
+  }
+
+  function setTime(kind, key) {
+    const T = TIMELINES[kind];
+    if (!D.tl[kind]?.index.has(key)) return;
+    if (kind === 'month') {
+      const before = monthlyUrl();
+      state.month = key;
+      if (monthlyUrl() !== before) map.getSource('gsw-monthly')?.setTiles([monthlyUrl()]);
+      if (map.getLayer('gsw-monthly')) map.setPaintProperty('gsw-monthly', 'raster-color-mix', monthChannel());
+    } else {
+      state[T.stateKey] = key;
+      map.getSource('gsw-yearly')?.setTiles([yearlyUrl()]);
+    }
+    renderTimebar();
+    markTime();
+    renderTimeChip();
+  }
+
+  // The bar under the map: a slider over a strip of national water for each month or year
+  let barKind = null;
+  function buildTimebar() {
+    const kind = tlKind();
+    if (barKind === kind) return;
+    barKind = kind;
+    const T = TIMELINES[kind];
+    const { keys } = D.tl[kind];
+    $('#tb-range').max = keys.length - 1;
+    $('#tb-prev').setAttribute('aria-label', `Previous ${T.unit}`);
+    $('#tb-next').setAttribute('aria-label', `Next ${T.unit}`);
+    $('#tb-range').setAttribute('aria-label', T.unit[0].toUpperCase() + T.unit.slice(1));
+    $('#tb-key').innerHTML = T.key.map(([c, name]) => `<i style="background:${c}"></i>${esc(name)}`).join('');
+    $('#tb-years').innerHTML = [1985, 1990, 1995, 2000, 2005, 2010, 2015, 2020]
+      .map((y) => `<span style="left:${(D.tl[kind].index.get(T.tick(y)) / (keys.length - 1)) * 100}%">${y}</span>`).join('');
+    drawStrip();
+  }
+
+  let pendingTime = null;
+  function onRange() {
+    const kind = tlKind();
+    if (!kind) return;
+    clearTimeout(pendingTime);
+    const key = D.tl[kind].keys[Number($('#tb-range').value)];
+    $('#tb-month').textContent = TIMELINES[kind].label(key);
+    pendingTime = setTimeout(() => setTime(kind, key), 120);
+  }
+
+  function stepTime(d) {
+    const kind = tlKind();
+    if (!kind) return;
+    const { keys, index } = D.tl[kind];
+    setTime(kind, keys[Math.max(0, Math.min(keys.length - 1, index.get(state[TIMELINES[kind].stateKey]) + d))]);
+  }
+
+  function drawStrip() {
+    const kind = tlKind();
+    if (!kind || !D.tl[kind]) return;
+    const rows = D.tl[kind].data.national;
+    const canvas = $('#tb-strip');
+    const dpr = devicePixelRatio || 1;
+    const w = canvas.clientWidth, h = canvas.clientHeight;
+    if (!w) return;
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    const ctx = canvas.getContext('2d');
+    ctx.scale(dpr, dpr);
+    const bw = w / rows.length;
+    const gap = kind === 'year' ? Math.min(2, bw * 0.2) : 0.3;
+    const total = (r) => (kind === 'year' ? r[0] + r[1] + r[2] : r[0]);
+    const max = Math.max(...rows.filter((r) => r[3] >= MONTHLY_PLOT_SEEN).map(total));
+    rows.forEach((r, i) => {
+      const x = i * bw;
+      const width = Math.max(bw - gap, 0.6);
+      if (r[3] < MONTHLY_PLOT_SEEN) {
+        ctx.fillStyle = 'rgba(148, 163, 184, 0.28)';
+        ctx.fillRect(x, h - 3, width, 3);
+        return;
+      }
+      // Bottom to top: the water that matters most sits on the baseline
+      const parts = kind === 'year'
+        ? [[r[0], YEARLY.permanent], [r[2], YEARLY.above], [r[1], YEARLY.seasonal]]
+        : [[r[2], MONTHLY.above], [r[0] - r[2], MONTHLY.usual]];
+      let top = h;
+      for (const [v, c] of parts) {
+        const ph = (Math.max(v, 0) / max) * (h - 2);
+        ctx.fillStyle = c;
+        ctx.fillRect(x, top - ph, width, ph);
+        top -= ph;
+      }
+    });
+  }
+  addEventListener('resize', drawStrip);
+
+  function renderTimebar() {
+    const kind = tlKind();
+    if (!kind || !D.tl[kind] || $('#timebar').hidden) return;
+    const T = TIMELINES[kind];
+    const { keys, index, data } = D.tl[kind];
+    const i = index.get(state[T.stateKey]);
+    $('#tb-range').value = i;
+    $('#tb-month').textContent = T.label(state[T.stateKey]);
+    const seen = data.national[i][3];
+    $('#tb-seen').textContent = kind === 'month'
+      ? `${Math.round(seen)}% of Pakistan seen${seen < MONTHLY_PLOT_SEEN ? ': mostly cloud or no image' : ''}`
+      : `${Math.round(seen)}% of Pakistan seen in 3+ months${seen < MONTHLY_PLOT_SEEN ? ': much of it unseen' : ''}`;
+    $('#tb-prev').disabled = i === 0;
+    $('#tb-next').disabled = i === keys.length - 1;
+    if (!$('#tb-strip').width) drawStrip();
+  }
+
+  // Insights chart for the selected region. Months: water seen, the usual water on the same ground, water above usual.
+  // Years: stacked bars of permanent, above-usual and other seasonal water.
+  function renderTimelineChart() {
+    const kind = tlKind();
+    if (!kind || !D.tl[kind] || $('#monthly-section').hidden) return;
+    const T = TIMELINES[kind];
+    const { keys } = D.tl[kind];
+    const rows = scopeTimeline(kind);
+    const svg = $('#mc-svg');
+    const W = svg.clientWidth || 330, H = 150, L = 40, R = 6, T0 = 8, B = 18;
+    const n = rows.length;
+    const yearly = kind === 'year';
+    const slot = (W - L - R) / (yearly ? n : n - 1);
+    const x = (i) => L + (yearly ? (i + 0.5) * slot : i * slot);
+    const ok = rows.map((r) => r[3] >= MONTHLY_PLOT_SEEN);
+    const total = (r) => (yearly ? r[0] + r[1] + r[2] : Math.max(r[0], r[1]));
+    const peak = Math.max(1, ...rows.filter((_, i) => yearly || ok[i]).map(total));
+    const unit = niceNum(peak / 2);
+    const top = Math.ceil(peak / unit) * unit;
+    const y = (v) => T0 + (1 - v / top) * (H - T0 - B);
+    const ticks = Array.from({ length: Math.round(top / unit) + 1 }, (_, k) => k * unit);
+    let marks;
+    if (yearly) {
+      const bw = Math.max(slot - 2, 1);
+      marks = rows.map((r, i) => {
+        let base = 0;
+        return [[r[0], YEARLY.permanent], [r[2], YEARLY.above], [r[1], YEARLY.seasonal]].map(([v, c]) => {
+          const y0 = y(base), y1 = y(base + v);
+          base += v;
+          return `<rect x="${(x(i) - bw / 2).toFixed(1)}" y="${y1.toFixed(1)}" width="${bw.toFixed(1)}" height="${Math.max(y0 - y1, 0).toFixed(1)}" fill="${c}" opacity="${ok[i] ? 1 : 0.3}"/>`;
+        }).join('');
+      }).join('');
+    } else {
+      const path = (k) => rows.map((r, i) => (ok[i] ? `${i && ok[i - 1] ? 'L' : 'M'}${x(i).toFixed(1)},${y(r[k]).toFixed(1)}` : '')).join('');
+      const area = rows.map((r, i) => (ok[i] && r[2] > 0 ? `M${(x(i) - 0.6).toFixed(1)},${y(0).toFixed(1)}V${y(r[2]).toFixed(1)}h1.2V${y(0).toFixed(1)}Z` : '')).join('');
+      marks = `<path d="${area}" fill="${MONTHLY.above}" opacity="0.85"/>
+        <path d="${path(1)}" fill="none" stroke="#94a3b8" stroke-width="1.2" stroke-dasharray="3 2"/>
+        <path d="${path(0)}" fill="none" stroke="${MONTHLY.usual}" stroke-width="1.5" stroke-linejoin="round"/>`;
+    }
+    const years = [1990, 2000, 2010, 2020];
+    svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
+    svg.innerHTML = `
+      <g class="mc-grid">${ticks.map((v) => `<line x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>`).join('')}</g>
+      <g class="mc-axis">${ticks.map((v) => `<text x="${L - 6}" y="${y(v) + 3}" text-anchor="end">${fmtKm(v)}</text>`).join('')}
+        ${years.map((yr) => `<text x="${x(D.tl[kind].index.get(T.tick(yr)))}" y="${H - 4}" text-anchor="middle">${yr}</text>`).join('')}</g>
+      ${marks}
+      <line id="mc-cur" y1="${T0}" y2="${H - B}" stroke="#fde047" stroke-width="1.5"/>
+      <line id="mc-hover" y1="${T0}" y2="${H - B}" stroke="#f8fafc" stroke-opacity="0.5" visibility="hidden"/>
+      <rect id="mc-hit" x="${L}" y="${T0}" width="${W - L - R}" height="${H - T0 - B}" fill="transparent"/>`;
+    $('#mc-kind').textContent = T.title;
+    $('#mc-scope').textContent = state.scope.level === 'national' ? 'Pakistan' : scopeRecord().name;
+    $('#mc-legend').innerHTML = T.legend.map(([shape, c, name]) => `<span><i class="${shape}" style="--c:${c}"></i>${esc(name)}</span>`).join('');
+    $('#mc-hint').textContent = T.hint;
+    const tip = $('#mc-tip');
+    const at = (e) => {
+      const r = svg.getBoundingClientRect();
+      const px = ((e.clientX - r.left) / r.width) * W;
+      const i = yearly ? Math.floor((px - L) / slot) : Math.round((px - L) / slot);
+      return Math.max(0, Math.min(n - 1, i));
+    };
+    const hit = svg.querySelector('#mc-hit');
+    hit.addEventListener('mousemove', (e) => {
+      const i = at(e);
+      const r = rows[i];
+      const hv = svg.querySelector('#mc-hover');
+      hv.setAttribute('x1', x(i));
+      hv.setAttribute('x2', x(i));
+      hv.setAttribute('visibility', 'visible');
+      tip.innerHTML = yearly
+        ? `<b>${keys[i]}</b> · ${Math.round(r[3])}% seen in 3+ months<br>Permanent ${fmtArea(r[0])} km² · seasonal ${fmtArea(r[1] + r[2])}<br>Of which well above usual ${fmtArea(r[2])} km²`
+        : `<b>${monthLabel(keys[i])}</b> · ${Math.round(r[3])}% seen<br>${r[3] < MONTHLY_PLOT_SEEN ? 'Too little seen to compare' : `Water seen ${fmtArea(r[0])} km² · usual ${fmtArea(r[1])}<br>Above usual ${fmtArea(r[2])} km²`}`;
+      tip.hidden = false;
+      const left = (x(i) / W) * svg.clientWidth;
+      tip.style.left = `${Math.min(Math.max(left - tip.offsetWidth / 2, 0), svg.clientWidth - tip.offsetWidth)}px`;
+    });
+    hit.addEventListener('mouseleave', () => { tip.hidden = true; svg.querySelector('#mc-hover').setAttribute('visibility', 'hidden'); });
+    hit.addEventListener('click', (e) => setTime(kind, keys[at(e)]));
+    markTime();
+  }
+
+  function markTime() {
+    const kind = tlKind();
+    const cur = $('#mc-svg')?.querySelector('#mc-cur');
+    if (!kind || !cur || !D.tl[kind]) return;
+    const W = Number($('#mc-svg').getAttribute('viewBox').split(' ')[2]);
+    const n = D.tl[kind].keys.length;
+    const i = D.tl[kind].index.get(state[TIMELINES[kind].stateKey]);
+    const slot = (W - 46) / (kind === 'year' ? n : n - 1);
+    const xx = 40 + (kind === 'year' ? (i + 0.5) * slot : i * slot);
+    cur.setAttribute('x1', xx);
+    cur.setAttribute('x2', xx);
+  }
+
+  function applyWaterTypes() {
+    const pal = D.palettes.watertype;
+    const on = state.waterTypes.size > 0 && !tour.on;
+    setVis('water-types', on);
+    if (on && map.getLayer('water-types')) map.setPaintProperty('water-types', 'raster-color', classColorMap([...state.waterTypes].map((t) => [t, rgb(pal[t])]), pal));
+    for (const b of document.querySelectorAll('#water-type-toggles button')) b.setAttribute('aria-checked', String(state.waterTypes.has(Number(b.dataset.type))));
+    for (const b of document.querySelectorAll('#type-legend button')) b.setAttribute('aria-pressed', String(state.waterTypes.has(Number(b.dataset.type))));
+    renderTimeChip();
+  }
+
+  function toggleWaterType(type) {
+    if (!state.waterTypes.delete(type)) state.waterTypes.add(type);
+    applyWaterTypes();
   }
 
   function applyOpacity() {
-    for (const L of CFG.layers) if (map.getLayer(`gsw-${L.id}`)) map.setPaintProperty(`gsw-${L.id}`, 'raster-opacity', state.opacity);
+    for (const id of [...DATA_LAYERS.map((L) => `gsw-${L.id}`), 'highlight-extent', 'highlight-classes']) {
+      if (map.getLayer(id)) map.setPaintProperty(id, 'raster-opacity', state.opacity);
+    }
   }
 
   function applyOverlays() {
@@ -594,6 +1086,9 @@
     setVis('prov-labels', o.provinces && o.labels);
     setVis('districts-line', districtsOn);
     setVis('dist-labels', districtsOn && o.labels);
+    setVis('tehsils-line', o.tehsils && !tour.on);
+    setVis('tehsil-labels', o.tehsils && o.labels && !tour.on);
+    ensureTehsils();
     setVis('disputed-labels', o.labels);
     for (const id of ['ww-minor', 'ww-glow', 'ww-major', 'ww-qanat']) setVis(id, o.rivers);
     setVis('ww-labels', o.rivers && o.labels);
@@ -603,6 +1098,11 @@
     // Village names would crowd the flythrough; they come back on pause
     for (const t of PLACE_TIERS) setVis(`place-labels-${t.id}`, o.labels && !(tour.playing && t.ranks[0] >= 2));
     applyFloodplainVis();
+    for (const id of ['erosion-dot', 'erosion-label']) setVis(id, o.erosionDots && !tour.on);
+    applyWaterTypes();
+    syncDots();
+    syncPulses();
+    $('#dots-legend').hidden = !o.erosionDots;
     $('#ww-legend').hidden = !o.rivers;
     ensureMinor();
     maybePlaces();
@@ -634,6 +1134,7 @@
     const f = scopeFeature();
     map.getSource('selection')?.setData(r ? { type: 'FeatureCollection', features: r.features }
       : f ? { type: 'FeatureCollection', features: [f] } : EMPTY);
+    map.getSource('highlight-mask')?.setData(f ? worldMask({ features: [f] }) : EMPTY);
     const p = state.place;
     map.getSource('place-pin')?.setData(p ? {
       type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [p.lng, p.lat] }, properties: { name: p.name } }],
@@ -647,6 +1148,18 @@
 
   // The unnamed network is large, so it is fetched only once someone zooms in with rivers on.
   let minorReq = null;
+  // Tehsil lines come with the units the popup uses, once zoomed in far enough to show them
+  const TEHSIL_ZOOM = 7.5;
+  let tehsilReq = null;
+  function ensureTehsils() {
+    if (tehsilReq || !state.overlays.tehsils || map.getZoom() < TEHSIL_ZOOM) return;
+    tehsilReq = ensureUnits().then(() => {
+      if (!D.units) { tehsilReq = null; return; }
+      map.getSource('tehsils')?.setData(D.units);
+      map.getSource('tehsil-labels')?.setData(labelPoints(D.units));
+    });
+  }
+
   function ensureMinor() {
     if (minorReq || !state.overlays.rivers || map.getZoom() < 6.5) return;
     minorReq = getJSON('data/waterways_minor.geojson')
@@ -745,6 +1258,7 @@
   map.on('style.load', async () => {
     await dataReady;
     bldActive.clear(); // a new style drops the building sources
+    dotLevel = null;
     applyFog();
     addLayers();
     hideBasemapLabelsInside();
@@ -762,21 +1276,33 @@
     const mode = resampling();
     if (mode === lastResampling || !map.getLayer('gsw-extent')) return;
     lastResampling = mode;
-    for (const L of CFG.layers) map.setPaintProperty(`gsw-${L.id}`, 'raster-resampling', mode);
+    for (const L of DATA_LAYERS) if (!L.timeline) map.setPaintProperty(`gsw-${L.id}`, 'raster-resampling', mode);
   }
 
   function maybePlaces() {
     if (state.overlays.labels && map.getZoom() >= PLACES_ZOOM) ensurePlaces().catch(console.error);
   }
 
+  map.on('zoom', syncDots);
+  map.on('moveend', syncPulses);
+
   map.on('zoomend', () => {
     ensureMinor();
+    ensureTehsils();
     maybePlaces();
     applyResampling();
   });
 
   // ------------------------------------------------------------------ left panel
   function legendHTML(L) {
+    const swatches = (list) => `<ul class="classes">${list.map(([c, name]) => `<li><span class="swatch" style="background:${c}"></span>${esc(name)}</li>`).join('')}</ul>`;
+    if (L.legend.type === 'monthly') {
+      return swatches([[MONTHLY.usual, 'Usual water for the month'], [MONTHLY.above, 'Water well above usual: likely flood'], [MONTHLY.unseen, 'Not seen: cloud or no image']]);
+    }
+    if (L.legend.type === 'yearly') {
+      return swatches([[YEARLY.permanent, 'Permanent water: rivers, canals, lakes'], [YEARLY.seasonal, 'Seasonal water: floods, rain, irrigation'],
+        [YEARLY.above, 'Seasonal, well above usual: likely flood'], [YEARLY.unseen, 'Not seen: under 3 months']]);
+    }
     const pal = D.palettes[L.id];
     const c = (v) => rgb(pal[v]);
     const g = L.legend;
@@ -799,6 +1325,8 @@
   }
 
   function thumbBG(L) {
+    if (L.timeline === 'month') return `linear-gradient(135deg, ${MONTHLY.usual} 0 55%, ${MONTHLY.above} 55% 100%)`;
+    if (L.timeline) return `linear-gradient(135deg, ${YEARLY.permanent} 0 40%, ${YEARLY.seasonal} 40% 72%, ${YEARLY.above} 72% 100%)`;
     const pal = D.palettes[L.id];
     const vals = Object.keys(pal).map(Number);
     if (vals.length === 1) return `radial-gradient(circle at 30% 30%, #a5f3fc, ${rgb(pal[vals[0]])} 45%, #0e7490)`;
@@ -814,15 +1342,18 @@
   function buildLayerCards() {
     const list = $('#layer-list');
     list.setAttribute('role', 'radiogroup');
-    for (const L of CFG.layers) {
+    for (const L of DATA_LAYERS) {
       const card = el('div', { class: 'layer-card', role: 'radio', tabindex: '0', 'aria-checked': String(L.id === state.layer), 'data-id': L.id }, `
         <div class="top">
           <span class="thumb" style="background:${thumbBG(L)}"></span>
           <div><div class="name">${esc(L.name)}</div><div class="tag">${esc(L.tag)}</div></div>
           <span class="radio"></span>
         </div>
-        <div class="more"><div><p class="desc">${esc(L.desc)}</p><div class="legend">${legendHTML(L)}</div></div></div>`);
-      const pick = () => setLayer(L.id);
+        <div class="more"><div><p class="desc">${esc(L.desc)}</p><p class="when"><b>Time covered:</b> ${esc(L.when)}</p><div class="legend">${legendHTML(L)}</div></div></div>`);
+      const pick = () => {
+        setLayer(L.id);
+        if (L.focus) map.fitBounds(L.focus, { padding: panelPadding(), pitch: state.terrain ? 55 : 20, bearing: 0, duration: 2400, essential: true });
+      };
       card.addEventListener('click', pick);
       card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
       list.append(card);
@@ -831,7 +1362,7 @@
 
   function setLayer(id) {
     state.layer = id;
-    for (const c of $('#layer-list').children) c.setAttribute('aria-checked', String(c.dataset.id === id));
+    state.highlight = false;
     applyLayer();
   }
 
@@ -845,6 +1376,22 @@
     };
     input.addEventListener('input', sync);
     sync();
+  }
+
+  function bindTimebar() {
+    $('#tb-range').addEventListener('input', onRange);
+    $('#tb-prev').addEventListener('click', () => stepTime(-1));
+    $('#tb-next').addEventListener('click', () => stepTime(1));
+  }
+
+  function buildWaterTypeToggles() {
+    const typeBox = $('#water-type-toggles');
+    for (const [k, name] of Object.entries(WATER_TYPES.legend.classes)) {
+      const b = el('button', { class: 'toggle', role: 'switch', 'aria-checked': 'false', 'data-type': k },
+        `<span class="lbl"><span class="swatch type-swatch" style="background:${rgb(D.palettes.watertype[k])}"></span>${esc(name)}</span><span class="sw"></span>`);
+      b.addEventListener('click', () => toggleWaterType(Number(k)));
+      typeBox.append(b);
+    }
   }
 
   function buildOverlays() {
@@ -1003,14 +1550,14 @@
       </div>${WAVE}`;
 
     const kpis = [
-      ['Permanent water', rec.permanent_km2, '#3b82f6'],
-      ['Seasonal water', rec.seasonal_km2, '#7dd3fc'],
-      ['Water gained', rec.gained_km2, '#34d399'],
-      ['Water lost', rec.lost_km2, '#fb7185'],
+      ['Permanent water', rec.permanent_km2, '#3b82f6', 'in 2024'],
+      ['Seasonal water', rec.seasonal_km2, '#7dd3fc', 'in 2024'],
+      ['Water gained', rec.gained_km2, '#34d399', '1984 to 2024'],
+      ['Water lost', rec.lost_km2, '#fb7185', '1984 to 2024'],
     ];
-    $('#kpi-grid').innerHTML = kpis.map(([label, v, c]) => `
+    $('#kpi-grid').innerHTML = kpis.map(([label, v, c, when]) => `
       <div class="kpi"><div class="label"><span class="dot" style="background:${c}"></span>${label}</div>
-      <div class="value"><span data-count="${v}">0</span><small>km²</small></div></div>`).join('');
+      <div class="value"><span data-count="${v}">0</span><small>km²</small></div><div class="kpi-when">${when}</div></div>`).join('');
     for (const n of document.querySelectorAll('#panel-insights [data-count]')) countUp(n, Number(n.dataset.count));
 
     const pal = D.palettes.transitions;
@@ -1022,7 +1569,34 @@
       <li><span class="swatch" style="background:${rgb(pal[k])}"></span><span>${esc(CFG.classes[k])}</span>
       <span class="v">${fmtArea(v)}</span><span class="p">${fmtPct(pct(v, total))}</span></li>`).join('');
 
+    renderTypes();
+    renderTimelineChart();
     renderRanking();
+  }
+
+  function scopeTypes() {
+    const s = state.scope;
+    if (s.level === 'province') return D.waterTypes.provinces[s.name];
+    if (s.level === 'district') return D.waterTypes.districts[s.id];
+    return D.waterTypes.national;
+  }
+
+  // Likely water types in this region. A click switches that type on or off on the map.
+  function renderTypes() {
+    const pal = D.palettes.watertype;
+    const names = WATER_TYPES.legend.classes;
+    const km2 = scopeTypes() || [];
+    const total = km2.reduce((a, v) => a + v, 0);
+    $('#type-bar').innerHTML = km2.map((v, i) => `<span style="flex-grow:${v};background:${rgb(pal[i + 1])}" title="${esc(names[i + 1])}: ${fmtArea(v)} km²"></span>`).join('');
+    const ul = $('#type-legend');
+    ul.innerHTML = '';
+    km2.forEach((v, i) => {
+      const li = el('li', {}, `<button type="button" data-type="${i + 1}" aria-pressed="${state.waterTypes.has(i + 1)}">
+        <span class="swatch" style="background:${rgb(pal[i + 1])}"></span><span>${esc(names[i + 1])}</span>
+        <span class="v">${fmtArea(v)}</span><span class="p">${fmtPct(pct(v, total))}</span></button>`);
+      li.firstElementChild.addEventListener('click', () => toggleWaterType(i + 1));
+      ul.append(li);
+    });
   }
 
   function rankingItems() {
@@ -1048,8 +1622,10 @@
       const b = el('button', { role: 'tab', 'aria-selected': String(m.key === state.metric), 'data-key': m.key }, m.label);
       b.addEventListener('click', () => {
         state.metric = m.key;
+        state.highlight = true;
         for (const t of tabs.children) t.setAttribute('aria-selected', String(t.dataset.key === m.key));
         renderRanking();
+        applyLayer();
       });
       tabs.append(b);
     }
@@ -1098,14 +1674,17 @@
     map.fitBounds([[w, s], [e, n]], { padding: panelPadding(), pitch: state.terrain ? 55 : 20, bearing: 0, maxZoom: 11, duration: 2400, essential: true });
   }
 
-  function setScope(scope, { fly = true } = {}) {
+  // On Monthly or Yearly Water a region's chart is the point, so its map stays
+  function setScope(scope, { fly = true, highlight = scope.level !== 'national' && !tlKind() } = {}) {
     state.scope = scope;
+    state.highlight = highlight;
     state.river = null;
     state.place = null;
     state.spin = false;
     pressed($('#btn-spin'), false);
     renderInsights();
     applySelection();
+    applyLayer();
     if (!fly) return;
     const f = scopeFeature();
     if (f) {
@@ -1119,7 +1698,7 @@
   // Pins a village/town, opens its district's insights and flies to it
   function focusPlace(p) {
     const d = p.district;
-    setScope(d ? { level: 'district', id: d.id } : p.province && D.provStats.has(p.province) ? { level: 'province', name: p.province } : { level: 'national' }, { fly: false });
+    setScope(d ? { level: 'district', id: d.id } : p.province && D.provStats.has(p.province) ? { level: 'province', name: p.province } : { level: 'national' }, { fly: false, highlight: false });
     state.place = p;
     applySelection();
     map.flyTo({ center: [p.lng, p.lat], zoom: p.rank <= 1 ? 11.5 : 15, pitch: state.terrain ? 55 : 50, bearing: 0, padding: panelPadding(), duration: 2600, essential: true });
@@ -1307,7 +1886,7 @@
         snapped = Math.sqrt(best.d) * mpp;
       }
     }
-    const values = await Promise.all(CFG.layers.map((L) => readPixel(L.id, gx, gy)));
+    const values = await Promise.all(PIXEL_LAYERS.map((L) => readPixel(L.id, gx, gy)));
     return { values, snapped };
   }
 
@@ -1321,7 +1900,7 @@
         const d = v - 100;
         return d === 0 ? 'No change' : `${d > 0 ? '+' : '−'}${Math.abs(d)}% occurrence`;
       }
-      case 'erosion': return CFG.layers.find((l) => l.id === 'erosion').legend.classes[v] || '—';
+      case 'erosion': case 'landloss': case 'watertype': return CFG.layers.find((l) => l.id === layer).legend.classes[v] || '—';
       default: return CFG.classes[v] || '—';
     }
   }
@@ -1339,8 +1918,148 @@
     return `<span class="line-swatch" style="--c:${k.color}"></span>${esc(name)}${w.properties.name ? ` <span class="kind">${esc(k.label)}</span>` : ''}`;
   }
 
+  // ------------------------------------------------------------------ administrative units
+  // Union councils or tehsils, from prepare_admin_units.py. Loaded on the first click.
+  let unitsReq = null;
+  function ensureUnits() {
+    unitsReq ||= Promise.all([getJSON('data/admin_units.geojson'), getJSON('data/unit_effects.json'), getJSON('data/land_change.json').catch(() => null)])
+      .then(([units, fx, land]) => {
+        D.units = units;
+        D.unitFx = fx;
+        D.unitFxI = Object.fromEntries(fx.metrics.map((m, i) => [m, i]));
+        D.unitLand = land;
+      })
+      .catch((err) => { unitsReq = null; console.error(err); });
+    return unitsReq;
+  }
+
+  function inRing(x, y, ring) {
+    let c = false;
+    for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+      const [xi, yi] = ring[i], [xj, yj] = ring[j];
+      if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) c = !c;
+    }
+    return c;
+  }
+
+  function inFeature(f, x, y) {
+    const g = f.geometry;
+    return (g.type === 'Polygon' ? [g.coordinates] : g.coordinates).some((poly) => inRing(x, y, poly[0]) && !poly.slice(1).some((h) => inRing(x, y, h)));
+  }
+
+  function unitAt(x, y) {
+    for (const f of D.units?.features || []) {
+      const [w, s, e, n] = f.properties.bbox;
+      if (x >= w && x <= e && y >= s && y <= n && inFeature(f, x, y)) return f;
+    }
+    return null;
+  }
+
+  // The effect of river change on one unit, in words first and then as a table
+  function unitEffect(unit) {
+    const P = unit.properties;
+    const level = D.units.level.toLowerCase();
+    const fx = D.unitFx.units[P.id];
+    if (!fx) return `<div class="fx-none">This ${level} has no ground in the Indus floodplain. River effects are calculated for the Indus floodplain only.</div>`;
+    const v = (k) => fx[D.unitFxI[k]];
+    const area = (a) => (a === 0 ? '0' : a < 0.05 ? '<0.1' : a < 100 ? a.toFixed(1) : fmtKm(a));
+    const n = (a) => fmtKm(a);
+    const eroded = v('ero_perm') + v('ero_seas');
+    const regained = v('acc_perm') + v('acc_seas');
+    const roadsEro = v('major_ero') + v('minor_ero');
+    const onGround = [`${area(v('crop_ero'))} km² of cropland`, `${n(v('bldg_ero'))} building${v('bldg_ero') === 1 ? '' : 's'}`];
+    if (v('place_ero')) onGround.push(`${n(v('place_ero'))} village${v('place_ero') === 1 ? '' : 's'} or town${v('place_ero') === 1 ? '' : 's'}`);
+    if (roadsEro >= 0.05) onGround.push(`${area(roadsEro)} km of road`);
+    if (v('rail_ero') >= 0.05) onGround.push(`${area(v('rail_ero'))} km of railway`);
+    const sentence = eroded < 0.05
+      ? `No sustained river erosion is recorded in the floodplain part of this ${level} since the 1980s.`
+      : `Since the 1980s about <b>${area(eroded)} km²</b> of land here has turned to water: ${area(v('ero_perm'))} km² permanently and ${area(v('ero_seas'))} km² for part of the year. Another ${area(regained)} km² has dried out. The affected ground holds <b>${onGround.join(', ')}</b>.`;
+
+    const row = (label, fp, ero, near) => `<tr><td>${label}</td><td>${fp}</td><td>${ero}</td><td>${near}</td></tr>`;
+    const table = `<table class="fx-table"><thead><tr><th>In floodplain</th><th>Total</th><th>Eroded or newly wet</th><th>Within 1 km of river</th></tr></thead><tbody>
+      ${row(`Buildings${D.unitFx.buildings === 'osm' ? ' (OSM only)' : ''}`, n(v('bldg_fp')), n(v('bldg_ero')), n(v('bldg_near')))}
+      ${row('Villages, towns', n(v('place_fp')), n(v('place_ero')), n(v('place_near')))}
+      ${row('Built-up, km²', area(v('built_fp')), area(v('built_ero')), area(v('built_near')))}
+      ${row('Cropland, km²', area(v('crop_fp')), area(v('crop_ero')), area(v('crop_near')))}
+      ${row('Main roads, km', area(v('major_fp')), area(v('major_ero')), area(v('major_near')))}
+      ${row('Other roads, km', area(v('minor_fp')), area(v('minor_ero')), area(v('minor_near')))}
+      ${row('Railway, km', area(v('rail_fp')), area(v('rail_ero')), area(v('rail_near')))}
+      ${row('Schools', n(v('edu_fp')), n(v('edu_ero')), n(v('edu_near')))}
+      ${row('Health facilities', n(v('health_fp')), n(v('health_ero')), n(v('health_near')))}
+      ${row('Bridges', n(v('bridge_fp')), n(v('bridge_ero')), n(v('bridge_near')))}
+    </tbody></table>`;
+
+    const L = D.unitLand;
+    const lf = L?.units?.[P.id];
+    let recent = '';
+    if (lf) {
+      const w = (k) => lf[L.meta.metrics.indexOf(k)];
+      const period = CFG.layers.find((l) => l.id === 'landloss').period;
+      recent = `<div class="fx-recent"><b>${esc(period)}</b>, 20 m satellite detail: ${area(w('loss'))} km² lost and ${area(w('deposit'))} km² deposited. ${n(w('bldg'))} buildings stand on the lost land and ${n(w('bldg_near'))} within ${L.meta.near_m} m of it.</div>`;
+    }
+    return `<div class="fx-title">Effect on settlements and infrastructure</div>
+      <p class="fx-sentence">${sentence}</p>${recent}${table}
+      <div class="fx-note">Counts the part of this ${level} inside the Indus floodplain (${area(v('fp'))} km²). Buildings on newly wet ground are exposed, not necessarily destroyed. Roads, schools, health facilities and bridges come from OpenStreetMap and are minimums.</div>`;
+  }
+
   let popup = null;
+
+  // Opens towards the middle of the screen, so a tall popup stays clear of the header and side panels
+  function popupAnchor(lngLat) {
+    const { x, y } = map.project(lngLat);
+    const c = map.getCanvas().getBoundingClientRect();
+    const v = y < c.height * 0.38 ? 'top-' : y > c.height * 0.66 ? 'bottom-' : '';
+    return v + (x < c.width / 2 ? 'left' : 'right');
+  }
+
+  // A dot: what stands on its eroded or newly wet ground, and the named places around it, pinned on the map
+  function showDot(P, lngLat) {
+    tip.hidden = true;
+    const area = (a) => (a === 0 ? '0' : a < 0.05 ? '<0.1' : a < 100 ? a.toFixed(1) : fmtKm(a));
+    const n = (a) => fmtKm(a);
+    const row = (label, v) => `<tr><td>${label}</td><td>${v}</td></tr>`;
+    const others = P.bld_named - P.places.reduce((a, p) => a + p[3], 0);
+    const noPlace = Math.round(P.bld) - P.bld_named;
+    const places = P.places.length ? `<div class="fx-sub">Named places nearest those buildings</div>
+      <table class="fx-table fx-dot">${P.places.map(([name, , , c]) => row(esc(name), n(c))).join('')}
+      ${others > 0 ? row(`${n(P.n_places - P.places.length)} more named places`, n(others)) : ''}
+      ${noPlace > 0 ? row('No named place within 3 km', n(noPlace)) : ''}</table>` : '';
+    const node = el('div', {}, `
+      <h4>${P.z <= 6 || !P.places.length ? esc(P.name) : `Around ${esc(P.name)}`}</h4>
+      <div class="where">${P.districts.map(esc).join(', ')}${P.districts.length ? ` district${P.districts.length > 1 ? 's' : ''} · ` : ''}Indus floodplain</div>
+      <div class="fx">
+        <div class="fx-title">What stands on this ground</div>
+        <p class="fx-sentence">Since the 1980s about <b>${area(P.km2)} km²</b> here has turned to water: ${area(P.perm)} km² permanently and ${area(P.km2 - P.perm)} km² for part of the year.</p>
+        <table class="fx-table fx-dot">
+          ${row('Buildings', n(P.bld))}${row('Cropland, km²', area(P.crop))}${row('Built-up, km²', area(P.built))}
+          ${row('Main roads, km', area(P.major))}${row('Other roads, km', area(P.minor))}${row('Railway, km', area(P.rail))}
+          ${row('Schools', n(P.edu))}${row('Health facilities', n(P.health))}${row('Bridges', n(P.bridge))}
+        </table>
+        ${places}
+        <div class="fx-note">A building is listed under the nearest named place, but may not belong to it. It is exposed, not necessarily destroyed. Roads, schools, health facilities and bridges come from OpenStreetMap and are minimums.</div>
+      </div>`);
+    const go = el('button', { class: 'go' }, 'Zoom to this ground →');
+    go.addEventListener('click', () => {
+      setLayer('erosion');
+      const [w, s, e, nn] = P.bbox;
+      map.once('moveend', () => { if (node.isConnected) showDot(P, lngLat); });
+      map.fitBounds([[w, s], [e, nn]], { padding: 90, maxZoom: 12.5, duration: reducedMotion ? 0 : 1400 });
+    });
+    node.append(go);
+    popup?.remove();
+    popup = new mapboxgl.Popup({ className: 'probe', maxWidth: '340px', offset: 12, focusAfterOpen: false, anchor: popupAnchor(lngLat) }).setLngLat(lngLat).setDOMContent(node).addTo(map);
+    popup.on('close', () => map.getSource('dot-pins')?.setData(EMPTY));
+    map.getSource('dot-pins')?.setData({ type: 'FeatureCollection', features: P.places.map(([name, lng, lat, c]) => (
+      { type: 'Feature', geometry: { type: 'Point', coordinates: [lng, lat] }, properties: { label: `${name} · ${n(c)}` } }
+    )) });
+  }
+
   async function probe(e) {
+    if (dotsOn()) {
+      const { x, y } = e.point;
+      const hit = map.queryRenderedFeatures([[x - 4, y - 4], [x + 4, y + 4]], { layers: ['erosion-dot'] })[0];
+      if (hit) return showDot(D.dotInfo.get(hit.properties.id), hit.geometry.coordinates);
+    }
     if (tour.on && map.getLayer('fp-transects')) {
       const { x, y } = e.point;
       const line = map.queryRenderedFeatures([[x - 6, y - 6], [x + 6, y + 6]], { layers: ['fp-transects'] })[0];
@@ -1349,21 +2068,23 @@
     const { lng, lat } = e.lngLat;
     const hit = map.getLayer('districts-fill') && map.queryRenderedFeatures(e.point, { layers: ['districts-fill'] })[0];
     const dist = hit ? D.distStats.get(hit.id) : null;
+    const disputed = dist ? null : D.disputed.features.find((f) => inFeature(f, lng, lat));
     const ww = waterwayAt(e.point);
     const bld = buildingAt(e.point);
     const bh = bld && Number(bld.properties.height);
     const node = el('div', {}, `
-      <h4>${dist ? esc(dist.name) : 'Outside Pakistan'}</h4>
-      <div class="where">${dist ? `${esc(dist.province)} · ` : ''}${lat.toFixed(4)}° N  ${lng.toFixed(4)}° E</div>
+      <h4>${dist ? esc(dist.name) : disputed ? esc(disputed.properties.name) : 'Outside Pakistan'}</h4>
+      <div class="where">${dist ? `${esc(dist.province)} · ` : disputed ? 'Disputed territory · ' : ''}${lat.toFixed(4)}° N  ${lng.toFixed(4)}° E</div>
       ${ww ? `<div class="ww">${waterwayLine(ww)}</div>` : ''}
       ${bld ? `<div class="bld"><span class="bld-swatch"></span>Building${bh >= 1 ? ` · ~${bh.toFixed(1)} m tall` : ''}
         <span class="kind">${esc(BLD_SOURCES[bld.properties.source] || bld.properties.source || '')}</span></div>` : ''}
-      <div class="loading"><span class="pulse"></span>Reading 30 m pixel…</div>`);
+      <div class="loading"><span class="pulse"></span>Reading this area…</div>`);
     popup?.remove();
-    popup = new mapboxgl.Popup({ className: 'probe', maxWidth: '320px', offset: 12, focusAfterOpen: false })
+    popup = new mapboxgl.Popup({ className: 'probe', maxWidth: '390px', offset: 12, focusAfterOpen: false, anchor: popupAnchor(e.lngLat) })
       .setLngLat(e.lngLat).setDOMContent(node).addTo(map);
+    popup.on('close', () => map.getSource('unit-outline')?.setData(EMPTY));
 
-    const [{ values, snapped }] = await Promise.all([sampleAll(lng, lat), dist ? ensurePlaces().catch(() => null) : null]);
+    const [{ values, snapped }] = await Promise.all([sampleAll(lng, lat), dist ? ensurePlaces().catch(() => null) : null, dist ? ensureUnits() : null]);
     if (!node.isConnected) return;
     node.querySelector('.loading').remove();
     const near = dist && nearestPlace(lng, lat);
@@ -1372,17 +2093,33 @@
       node.querySelector('.where').insertAdjacentHTML('afterend',
         `<div class="near">Near <b>${esc(near.place.name)}</b> <span>${esc(PLACE_KINDS[near.place.kind].toLowerCase())} · ${d}</span></div>`);
     }
-    if (snapped) node.querySelector('.where').insertAdjacentHTML('afterend', `<div class="snap">Nearest water pixel · ${Math.round(snapped / 10) * 10} m away</div>`);
+    // Name the union council or tehsil first, then what the river did to it
+    const unit = dist && D.units ? unitAt(lng, lat) : null;
+    if (unit) {
+      const P = unit.properties;
+      const parents = [P.tehsil && `${P.tehsil} tehsil`, `${P.district} district`, P.province].filter(Boolean);
+      node.querySelector('h4').textContent = `${P.name} ${D.units.level.toLowerCase()}`;
+      node.querySelector('.where').textContent = `${parents.join(' · ')} · ${lat.toFixed(4)}° N  ${lng.toFixed(4)}° E`;
+      map.getSource('unit-outline')?.setData({ type: 'FeatureCollection', features: [unit] });
+      node.insertAdjacentHTML('beforeend', `<div class="fx">${unitEffect(unit)}</div>`);
+    } else if (dist && D.units) {
+      node.insertAdjacentHTML('beforeend', `<div class="fx"><div class="fx-none">No ${D.units.level.toLowerCase()} boundary covers this point.</div></div>`);
+    }
+
+    const pixel = el('details', { class: 'fx-pixel' }, `<summary>Water values at this spot</summary>`);
+    if (snapped) pixel.insertAdjacentHTML('beforeend', `<div class="snap">Nearest water pixel · ${Math.round(snapped / 10) * 10} m away</div>`);
     if (values.some(Boolean)) {
-      const rows = CFG.layers.map((L, i) => {
+      const rows = PIXEL_LAYERS.map((L, i) => {
         const v = values[i];
         const cell = v ? `<span class="swatch" style="background:${rgb(v.color)}"></span>${esc(describe(L.id, v.value))}` : '<span class="none">—</span>';
         return `<tr><td>${esc(L.short)}</td><td>${cell}</td></tr>`;
       });
-      node.insertAdjacentHTML('beforeend', `<table>${rows.join('')}</table>`);
+      pixel.insertAdjacentHTML('beforeend', `<table>${rows.join('')}</table>`);
     } else {
-      node.insertAdjacentHTML('beforeend', `<div class="loading">${dist ? 'No surface water recorded here, 1984–2024.' : 'Data covers Pakistan only.'}</div>`);
+      pixel.insertAdjacentHTML('beforeend', `<div class="loading">${dist || disputed ? 'No surface water recorded here, 1984–2024.' : 'Data covers Pakistan only.'}</div>`);
     }
+    if (!unit) pixel.open = true; // nothing else to show first
+    node.append(pixel);
     if (dist) {
       const go = el('button', { class: 'go' }, `${esc(dist.name)} district insights →`);
       go.addEventListener('click', () => { popup.remove(); setScope({ level: 'district', id: dist.id }); });
@@ -1394,6 +2131,7 @@
   // ------------------------------------------------------------------ hover + status bar
   let hoverId = null;
   const tip = $('#hover-tip');
+  const fmtDotKm2 = (v) => (v < 0.1 ? '<0.1' : v.toLocaleString('en-US', { maximumFractionDigits: v < 10 ? 1 : 0 }));
 
   function setHover(id) {
     if (id === hoverId) return;
@@ -1407,6 +2145,15 @@
     if (!map.getLayer('districts-fill') || !D.distStats) return;
     const f = map.queryRenderedFeatures(e.point, { layers: ['districts-fill'] })[0];
     setHover(f ? f.id : null);
+    const dot = dotsOn() ? map.queryRenderedFeatures(e.point, { layers: ['erosion-dot'] })[0] : null;
+    if (dot && !isMobile()) {
+      const { name, sub, km2 } = dot.properties;
+      tip.innerHTML = `<div class="t">${esc(name)}</div><div class="s">${esc(sub)} on ${fmtDotKm2(km2)} km² eroded or newly wet · click for the villages</div>`;
+      tip.style.left = `${e.originalEvent.clientX}px`;
+      tip.style.top = `${e.originalEvent.clientY}px`;
+      tip.hidden = false;
+      return;
+    }
     const w = waterwayAt(e.point);
     const named = w && w.properties.name ? w : null;
     if ((f || named) && !isMobile()) {
@@ -1619,7 +2366,7 @@
   }
 
   function updateTourHud() {
-    if (!tour.route) return;
+    if (!tour.on || !tour.route) return;
     const { km } = tour;
     const S = tour.route.stops;
     const len = tour.route.length_km;
@@ -1641,6 +2388,9 @@
     $('#tour-dist').textContent = left === right ? left : `${left} · ${right}`;
     $('#tour-dist').title = $('#tour-dist').textContent;
     $('#tour-water').textContent = `${((sec.fpl + sec.fpr) / 1000).toFixed(1)} km`;
+    const inLand = !!D.land && km >= D.land.meta.km0 && km <= D.land.meta.km1;
+    const wantLayer = inLand ? 'landloss' : 'erosion';
+    if (state.layer !== wantLayer) setLayer(wantLayer);
     showSection(sec);
     showTable(km, sec);
 
@@ -1674,7 +2424,7 @@
     pressed($('#btn-spin'), false);
     const panels = ['panel-layers', 'panel-insights'];
     tour.saved = {
-      basemap: state.basemap, terrain: state.terrain, river: state.river, layer: state.layer, opacity: state.opacity, districts: state.overlays.districts,
+      basemap: state.basemap, terrain: state.terrain, river: state.river, layer: state.layer, highlight: state.highlight, opacity: state.opacity, districts: state.overlays.districts,
       camera: { center: map.getCenter(), zoom: map.getZoom(), pitch: map.getPitch(), bearing: map.getBearing() },
       collapsed: panels.filter((id) => $(`#${id}`).classList.contains('collapsed')),
     };
@@ -1740,6 +2490,8 @@
     map.setPadding({ top: 0, bottom: 0, left: 0, right: 0 });
     const s = tour.saved;
     if (s.layer) setLayer(s.layer);
+    state.highlight = s.highlight;
+    applyLayer();
     state.opacity = s.opacity;
     applyOpacity();
     state.overlays.districts = s.districts;
@@ -1794,7 +2546,7 @@
     for (const ev of ['mousedown', 'touchstart', 'wheel']) {
       map.on(ev, () => { if (tour.on && (tour.playing || tour.orbiting)) pauseTour(); });
     }
-    map.on('idle', () => { if (tour.on) updateTourHud(); });
+    map.on('idle', () => { if (tour.on && D.fpSections) updateTourHud(); });
 
     document.addEventListener('keydown', (e) => {
       if (!tour.on || !tour.route || e.target.closest?.('input, textarea')) return;
@@ -1813,8 +2565,14 @@
   function loadFloodplain() {
     fpReq ||= Promise.all([
       getJSON('data/floodplain.json'), getJSON('data/fp_sections.json'), getJSON('data/floodplain.geojson'),
-      getJSON('data/fp_transects.geojson'), getJSON('data/fp_infra.geojson'),
-    ]).then(([fp, secs, outline, transects, infra]) => {
+      getJSON('data/fp_transects.geojson'), getJSON('data/fp_infra.geojson'), getJSON('data/land_change.json').catch(() => null),
+    ]).then(([fp, secs, outline, transects, infra, land]) => {
+      if (land) {
+        D.land = land;
+        D.landI = Object.fromEntries(land.meta.metrics.map((m, i) => [m, i]));
+        D.landReach = new Map(land.reaches.map((r) => [r.r, r]));
+        D.landArea = new Map(land.areas.map((a) => [a.id, a]));
+      }
       D.fp = fp;
       D.fpI = Object.fromEntries(fp.meta.metrics.map((m, i) => [m, i]));
       D.fpSections = secs.sections;
@@ -1866,6 +2624,9 @@
     4: 'Regained from seasonal water', 5: 'Water in both years', 6: 'Wet at times, no lasting change',
   };
   const FP = { sec: -1, tableKey: '', cur: null };
+
+  const landLayer = () => CFG.layers.find((l) => l.id === 'landloss');
+  const LAND_NAMES = () => landLayer().legend.classes;
 
   function unRle(a) {
     let n = 0;
@@ -1988,14 +2749,18 @@
       axis += `<line x1="${sx(x)}" x2="${sx(x)}" y1="${top + PH}" y2="${top + PH + 4}" stroke="rgba(148,178,255,.3)"/>`
         + `<text x="${sx(x)}" y="${top + PH + 15}" text-anchor="middle">${x === 0 ? '0 km' : `${x < 0 ? '−' : '+'}${Math.abs(x / 1000)}`}</text>`;
     }
-    const H = sT + 60;
+    const landLine = D.land?.sections[sec.km];
+    const landCls = landLine ? unRle(landLine) : null;
+    const LAND_C = D.palettes.landloss;
+    const landStrip = landCls ? stripRow('2018–25', sT + 60, (v) => (LAND_C[v] ? `rgb(${LAND_C[v].join(',')})` : null), landCls) : '';
+    const H = sT + (landCls ? 75 : 60);
     const box = $('#fp-chart');
     box.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Ground profile across the Indus at km ${fmtKm(sec.km)}. Water width was ${sec.tw} km in 1984 to 1999 and ${sec.nw} km in 2000 to 2024.">
       <text class="lbl" x="${ML}" y="12">Left bank</text><text class="lbl" x="${W - MR}" y="12" text-anchor="end">Right bank</text>
       ${band}${grid}
       ${area ? `<path d="${area}" fill="rgba(148,178,255,.1)"/><path d="${line}" fill="none" stroke="#dbe4f3" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>` : ''}
-      ${axis}${marks}${labels}${strips}
-      <line id="fp-cross" x1="0" x2="0" y1="${top}" y2="${sT + 57}" stroke="#f8fafc" stroke-opacity=".6" visibility="hidden"/>
+      ${axis}${marks}${labels}${strips}${landStrip}
+      <line id="fp-cross" x1="0" x2="0" y1="${top}" y2="${H - 3}" stroke="#f8fafc" stroke-opacity=".6" visibility="hidden"/>
       <rect id="fp-hit" x="${ML}" y="${top}" width="${W - ML - MR}" height="${H - top}" fill="transparent"/>
     </svg>`;
 
@@ -2013,6 +2778,7 @@
       const z = groundAt(x);
       tip.innerHTML = `<b>${x === 0 ? 'Centre line' : `${(Math.abs(x) / 1000).toFixed(1)} km ${x < 0 ? 'left' : 'right'} of centre`}</b><br>`
         + `Ground ${fmtKm(z)} m<br>${esc(CHANGE_NAMES[cls[i]])}<br>${esc(LC_NAMES[lc[i]])} (2021)`
+        + (landCls && landCls[i] ? `<br>2018–25: ${esc(LAND_NAMES()[landCls[i]])}` : '')
         + (near.length ? `<br>${near.map(esc).join('<br>')}` : '');
       tip.style.left = `${e.clientX}px`;
       tip.style.top = `${e.clientY}px`;
@@ -2078,7 +2844,31 @@
     { label: 'Dams and weirs', key: 'dam_fp', count: true },
   ];
 
-  const rowLabel = (d) => `${d.key.toString().startsWith('bldg') && D.fp.meta.buildings === 'osm' ? `${d.label} (OSM only)` : d.label}${d.unit ? ` (${d.unit})` : ''}`;
+  // Detailed 20 m data, where the Earth Engine exports reach
+  const landV = (r, k) => r.v[D.landI[k]];
+  const LAND_ROWS = () => [
+    { label: 'Land lost to the river', unit: 'km²', key: (r) => landV(r, 'loss') },
+    { label: 'Land deposited', unit: 'km²', key: (r) => landV(r, 'deposit') },
+    { label: 'Net change in dry land', unit: 'km²', key: (r) => landV(r, 'deposit') - landV(r, 'loss'), signed: true },
+    { label: 'Land lost per year', unit: 'km²', key: (r) => landV(r, 'loss') / landLayer().years },
+    { label: 'Land deposited per year', unit: 'km²', key: (r) => landV(r, 'deposit') / landLayer().years },
+    { label: 'Lost land that was cropland in 2021', unit: 'km²', key: (r) => landV(r, 'crop') },
+    { label: 'Lost land that was built-up in 2021', unit: 'km²', key: (r) => landV(r, 'built') },
+    { label: 'Lost land already water in 2021', unit: 'km²', key: (r) => landV(r, 'water21') },
+    { label: 'Buildings on lost land', key: (r) => landV(r, 'bldg'), count: true },
+    { label: `Buildings within ${D.land.meta.near_m} m of lost land`, key: (r) => landV(r, 'bldg_near'), count: true },
+    { label: 'Villages and towns on lost land', key: (r) => landV(r, 'place'), count: true },
+    { label: `Villages and towns within ${D.land.meta.near_m} m`, key: (r) => landV(r, 'place_near'), count: true },
+    { label: 'Main roads on lost land', unit: 'km', key: (r) => landV(r, 'major') },
+    { label: `Main roads within ${D.land.meta.near_m} m`, unit: 'km', key: (r) => landV(r, 'major_near') },
+    { label: 'Other roads on lost land', unit: 'km', key: (r) => landV(r, 'minor') },
+    { label: 'Railway on lost land', unit: 'km', key: (r) => landV(r, 'rail') },
+    { label: `Railway within ${D.land.meta.near_m} m`, unit: 'km', key: (r) => landV(r, 'rail_near') },
+    { label: 'Schools on lost land', key: (r) => landV(r, 'edu'), count: true },
+    { label: 'Health facilities on lost land', key: (r) => landV(r, 'health'), count: true },
+  ];
+
+  const rowLabel = (d) => `${typeof d.key === 'string' && d.key.startsWith('bldg') && D.fp.meta.buildings === 'osm' ? `${d.label} (OSM only)` : d.label}${d.unit ? ` (${d.unit})` : ''}`;
   const rowValue = (def, rec) => (typeof def.key === 'function' ? def.key(rec) : fpV(rec, def.key));
   function fmtFp(def, v) {
     if (v == null) return '—';
@@ -2096,7 +2886,8 @@
     const r = Math.floor(km / D.fp.meta.reach_km);
     const reach = D.fpReach.get(r) || D.fpReach.get(r - 1);
     if (!reach || $('#fp-table').hidden) return;
-    const key = `${r}|${sec.ld}|${sec.rd}`;
+    const landOn = !!D.land && km >= D.land.meta.km0 && km <= D.land.meta.km1;
+    const key = `${r}|${sec.ld}|${sec.rd}|${landOn}`;
     if (key === FP.tableKey) return;
     FP.tableKey = key;
     const cols = [{ name: 'This reach', rec: reach, title: `River km ${reach.km0}–${reach.km1}` }];
@@ -2110,36 +2901,52 @@
     const body = FP_ROWS.map((d) => (d.group
       ? `<tr class="grp"><td colspan="${cols.length + 1}">${d.group}</td></tr>`
       : `<tr><td>${rowLabel(d)}</td>${cols.map((c) => `<td>${fmtFp(d, rowValue(d, c.rec))}</td>`).join('')}</tr>`)).join('');
+    // Detailed block first where it exists: it answers "what did the river take here"
+    let land = '';
+    if (landOn) {
+      const lr = D.landReach.get(r);
+      const lc = [{ name: 'This reach', rec: lr }];
+      if (D.landArea.has(sec.ld)) lc.push({ name: a?.name || distName(sec.ld), rec: D.landArea.get(sec.ld) });
+      if (sec.rd !== sec.ld && D.landArea.has(sec.rd)) lc.push({ name: b?.name || distName(sec.rd), rec: D.landArea.get(sec.rd) });
+      lc.push({ name: 'Window', rec: { v: D.land.total } });
+      const cells = (d) => lc.map((c) => `<td>${c.rec ? fmtFp(d, d.key(c.rec)) : '—'}</td>`).join('');
+      land = `<thead><tr><th>Sukkur reach, 20 m · ${esc(landLayer().period)}</th>${lc.map((c) => `<th>${esc(c.name)}</th>`).join('')}</tr></thead>
+        <tbody>${LAND_ROWS().map((d) => `<tr><td>${rowLabel(d)}</td>${cells(d)}</tr>`).join('')}</tbody>`;
+    }
     const wrap = $('#fp-table-wrap');
     const top = wrap.scrollTop;
-    wrap.innerHTML = `<table class="fp-tbl"><thead>${head}</thead><tbody>${body}</tbody></table>
+    wrap.innerHTML = `${land ? `<table class="fp-tbl fp-land">${land}</table>` : ''}<table class="fp-tbl"><thead>${head}</thead><tbody>${body}</tbody></table>
       <div class="fp-foot">${buildingNote()}Districts count the floodplain only, not the whole district. Eroded or newly wet ground became permanent or seasonal water since the 1980s, confirmed as a sustained change. Seasonally wet land is not necessarily lost.</div>`;
     wrap.scrollTop = top;
   }
 
   let allMode = 'district';
-  const allRows = () => (allMode === 'district'
+  const allDefs = () => (allMode === 'land' ? LAND_ROWS() : FP_ROWS.filter((d) => !d.group));
+  const allRows = () => (allMode === 'land'
+    ? D.land.areas.map((a) => ({ name: a.name, sub: a.province, km: `${D.land.meta.km0}–${D.land.meta.km1}`, rec: a, id: a.id }))
+    : allMode === 'district'
     ? [...D.fp.areas].map((a) => ({ name: a.name, sub: a.province, km: `${a.km0}–${a.km1}`, rec: a, id: a.id }))
     : D.fp.reaches.map((r) => ({ name: `km ${r.km0}–${r.km1}`, sub: r.d.map(distName).join(', '), km: `${r.km0}–${r.km1}`, rec: r, r: r.r })));
 
   function renderAllAreas() {
-    const defs = FP_ROWS.filter((d) => !d.group);
+    const defs = allDefs();
     const sec = tour.route ? sectionAt(tour.km) : null;
     const curR = Math.floor(tour.km / D.fp.meta.reach_km);
-    const head = `<tr><th>${allMode === 'district' ? 'District' : 'Reach'}</th><th>River km</th>${defs.map((d) => `<th>${rowLabel(d)}</th>`).join('')}</tr>`;
+    const head = `<tr><th>${allMode === 'reach' ? 'Reach' : 'District'}</th><th>River km</th>${defs.map((d) => `<th>${rowLabel(d)}</th>`).join('')}</tr>`;
     const rows = allRows().map((a) => {
-      const now = allMode === 'district' ? sec && (a.id === sec.ld || a.id === sec.rd) : a.r === curR;
+      const now = allMode === 'reach' ? a.r === curR : sec && (a.id === sec.ld || a.id === sec.rd);
       return `<tr${now ? ' class="now"' : ''}><td title="${esc(a.sub)}">${esc(a.name)}</td><td>${a.km}</td>${defs.map((d) => `<td>${fmtFp(d, rowValue(d, a.rec))}</td>`).join('')}</tr>`;
     }).join('');
-    const total = `<tr class="now"><td>All Indus</td><td></td>${defs.map((d) => `<td>${fmtFp(d, rowValue(d, { v: D.fp.total }))}</td>`).join('')}</tr>`;
+    const whole = { v: allMode === 'land' ? D.land.total : D.fp.total };
+    const total = `<tr class="now"><td>${allMode === 'land' ? 'Whole window' : 'All Indus'}</td><td></td>${defs.map((d) => `<td>${fmtFp(d, rowValue(d, whole))}</td>`).join('')}</tr>`;
     $('#fp-all-wrap').innerHTML = `<table class="fp-tbl"><thead>${head}</thead><tbody>${rows}${total}</tbody></table>
       <div class="fp-foot">${buildingNote()}Highlighted rows are where the camera is now. Reaches and districts are different cuts of the same floodplain.</div>`;
   }
 
   function downloadAllAreas() {
-    const defs = FP_ROWS.filter((d) => !d.group);
+    const defs = allDefs();
     const q = (v) => `"${String(v).replace(/"/g, '""')}"`;
-    const lines = [[allMode === 'district' ? 'District' : 'Reach', allMode === 'district' ? 'Province' : 'Districts', 'River km', ...defs.map(rowLabel)].map(q).join(',')];
+    const lines = [[allMode === 'reach' ? 'Reach' : 'District', allMode === 'reach' ? 'Districts' : 'Province', 'River km', ...defs.map(rowLabel)].map(q).join(',')];
     for (const a of allRows()) lines.push([q(a.name), q(a.sub), q(a.km), ...defs.map((d) => (rowValue(d, a.rec) ?? '')).map((v) => (typeof v === 'number' ? +v.toFixed(3) : v))].join(','));
     const url = URL.createObjectURL(new Blob(['\ufeff', lines.join('\n')], { type: 'text/csv' }));
     const link = el('a', { href: url, download: `indus_floodplain_by_${allMode}.csv` });
@@ -2148,12 +2955,16 @@
   }
 
   function buildAllAreas() {
-    $('#fp-all-open').addEventListener('click', () => { $('#fp-all').hidden = false; renderAllAreas(); });
+    $('#fp-all-open').addEventListener('click', () => {
+      $('#fp-all').hidden = false;
+      $('#fp-all-mode').children[2].hidden = !D.land;
+      renderAllAreas();
+    });
     $('#fp-all-close').addEventListener('click', () => { $('#fp-all').hidden = true; });
     $('#fp-all').addEventListener('click', (e) => { if (e.target.id === 'fp-all') $('#fp-all').hidden = true; });
     $('#fp-all-csv').addEventListener('click', downloadAllAreas);
     const seg = $('#fp-all-mode');
-    for (const [id, label] of [['district', 'By district'], ['reach', 'By 20 km reach']]) {
+    for (const [id, label] of [['district', 'By district'], ['reach', 'By 20 km reach'], ['land', 'Sukkur 20 m']]) {
       const b = el('button', { role: 'radio', 'aria-checked': String(id === allMode) }, label);
       b.addEventListener('click', () => {
         allMode = id;
@@ -2168,6 +2979,8 @@
     $('#fp-legend').innerHTML = `
       <div class="row"><span class="h">Change, and the erosion map layer</span>
         <span>${sw(P[0])}Lost to permanent water</span><span>${sw(P[1])}Turned seasonally wet</span><span>${sw(P[2])}Regained</span><span>${sw(P[3])}Water in both years</span><span>${sw('#7b8494')}No lasting change (map only)</span></div>
+      <div class="row"><span class="h">Sukkur reach, 20 m detail (replaces the layer above there)</span>
+        <span>${sw(P[0])}Lost to the river</span><span>${sw(P[2])}Deposited</span><span>${sw(P[3])}Water in both</span></div>
       <div class="row"><span class="h">Land cover, ESA WorldCover 2021</span>
         ${Object.entries(LC_COLORS).map(([k, c]) => `<span>${sw(c)}${LC_NAMES[k]}</span>`).join('')}</div>
       <div class="row"><span class="h">On the map and the profile</span>
@@ -2178,7 +2991,8 @@
       + 'The 1984–99 and 2000–24 strips are estimates from JRC overall occurrence and occurrence change, counting a pixel wet at 25% or more. '
       + 'The profile line is the Copernicus surface model, which includes trees and buildings and cannot see the river bed, so it shows the shape of the land, not channel depth. '
       + 'Bank movement compares the outer edges of the main water belt and can swing widely where the river is braided. '
-      + 'Land cover is from 2021, so land already under permanent water shows as water and what it used to be is not known.';
+      + 'Land cover is from 2021, so land already under permanent water shows as water and what it used to be is not known. '
+      + 'Near Sukkur, the 20 m layer compares water in Nov–Jan of 2018–19 and 2025–26, so a different winter river level also shows up as loss or deposition, and sand bars in the channel count as land.';
   }
 
   // ------------------------------------------------------------------ boot
@@ -2194,6 +3008,8 @@
 
   dataReady.then(() => {
     buildLayerCards();
+    buildWaterTypeToggles();
+    bindTimebar();
     buildOpacity();
     buildMetricTabs();
     buildSearch();

@@ -10,9 +10,19 @@
 /build/
 /osm_src/
 
+# Full-detail boundaries, about 600 MB: over GitHub's file limit. prepare_boundaries.py and prepare_admin_units.py read them.
+/boundries/
+
+# Earth Engine monthly exports (about 5 GB) and the monthly tiles made from them (about 480 MB, 62,000 files):
+# too large for GitHub. prepare_timeline.py rebuilds the tiles from the exports. The yearly tiles (47 MB) are kept.
+/ndma water monthly/
+/portal/tiles/monthly/
+
+# Rebuilt by prepare_water_types.py; the rendered tiles in portal/tiles are kept
+/watertype/
+
 # Not used by the portal
 /rivers/
-/GEE indus erosion/
 
 __pycache__/
 *.pyc

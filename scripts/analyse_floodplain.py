@@ -26,6 +26,7 @@ Outputs:
   portal/data/fp_transects.geojson   cross-section lines
   portal/data/fp_infra.geojson       roads, rail, bridges, schools, health facilities
   erosion/erosion_*_v1_5_2024.tif    source of the "erosion" map layer (build_tiles.py --layers erosion)
+  build/floodplain/erosion_cells.npz the same figures per grid cell, read by prepare_erosion_dots.py
 
     python scripts/analyse_floodplain.py     (after prepare_floodplain.py, prepare_places.py)
 """
@@ -62,6 +63,7 @@ SUSTAINED = 25          # occurrence points the change layer must have moved
 WET_OCC = 25            # a pixel is water in an epoch at this occurrence or more
 RIVER_OCC = 50          # regularly wet: what "near bank" measures from
 CHUNK = 1000            # JRC pixels, 0.25 degrees
+CELL = 100              # JRC pixels, 0.025 degrees: the grid behind the erosion dots; divides CHUNK
 PAD = 45                # pixels read around a chunk so distances to water cross chunk edges
 SEC_MARGIN_M = 2000     # cross-section charts show this much ground beyond the floodplain
 BUILDING_ZOOM = 15      # complete footprints; lower zooms drop dense buildings
@@ -118,10 +120,12 @@ def erosion_classes(trans, d):
 _W = {}
 
 
-def _init(fp_wkb, dist_wkb, dist_ids, route_xy):
+def _init(fp_wkb, dist_wkb, dist_ids, route_xy, unit_wkb):
     _W["fp"] = shapely.from_wkb(fp_wkb)
     _W["districts"] = [(shapely.from_wkb(w), i) for w, i in zip(dist_wkb, dist_ids)]
     _W["tree"] = cKDTree(route_xy)
+    _W["units"] = [shapely.from_wkb(w) for w in unit_wkb]
+    _W["unit_tree"] = shapely.STRtree(_W["units"]) if _W["units"] else None
 
 
 def lc_counts(r0, c0):
@@ -144,7 +148,7 @@ def process_chunk(args):
     fp = features.rasterize([(_W["fp"], 1)], out_shape=(CHUNK, CHUNK), transform=tf, fill=0, dtype="uint8").astype(bool)
     lc = lc_counts(r0, c0)      # also caches ground around the floodplain for the cross-section charts
     if not fp.any():
-        return {}, None, r0, c0
+        return {}, {}, {}, None, r0, c0
 
     lat = LAT0 - (r0 + np.arange(CHUNK) + 0.5) * RES
     cell_km2 = (RES * 111.320 * np.cos(np.radians(lat))) * (RES * 110.574)
@@ -169,64 +173,83 @@ def process_chunk(args):
         return km // REACH_KM
 
     rows, cols = np.nonzero(fp)
-    reach = assign(LON0 + (c0 + cols + 0.5) * RES, LAT0 - (r0 + rows + 0.5) * RES)
-    keys = reach.astype(np.int64) * 100000 + dist[rows, cols]
-    uk, inv = np.unique(keys, return_inverse=True)
-    table = np.zeros((len(uk), len(METRICS)))
     area = cell_km2[rows]
-
-    def add(name, sel):
-        table[:, MI[name]] = np.bincount(inv, weights=area * sel, minlength=len(uk))
-
     t, c = trans[rows, cols], classes[rows, cols]
-    add("fp", np.ones(len(rows)))
-    add("water_then", o_then[rows, cols] >= WET_OCC)
-    add("water_now", o_now[rows, cols] >= WET_OCC)
-    add("perm_now", np.isin(t, (1, 2, 7)))
-    add("seas_now", np.isin(t, (4, 5, 8)))
-    add("ero_perm", c == 1)
-    add("ero_seas", c == 2)
-    add("acc_perm", c == 3)
-    add("acc_seas", c == 4)
-    add("passing", c == 6)
-
     zones = {"fp": np.ones(len(rows), bool), "ero": ero[rows, cols], "near": near[rows, cols]}
-    for g, name in enumerate(LC_GROUPS):
-        share = lc[g][rows, cols] / 9
-        for z, sel in zones.items():
-            table[:, MI[f"{name}_{z}"]] = np.bincount(inv, weights=area * share * sel, minlength=len(uk))
 
-    index = {int(k): i for i, k in enumerate(uk)}
+    def tabulate(pixel_keys, point_key):
+        """All metrics grouped by a key: pixel_keys for the floodplain pixels, point_key(lon, lat, r, c) for features."""
+        uk, inv = np.unique(pixel_keys, return_inverse=True)
+        table = np.zeros((len(uk), len(METRICS)))
 
-    def lookup(lon, lat_):
-        """Zone flags and table row for points; -1 where a point is outside the floodplain."""
-        pr, pc = to_rc(lon, lat_)
-        pr, pc = pr - r0, pc - c0
-        ok = (pr >= 0) & (pr < CHUNK) & (pc >= 0) & (pc < CHUNK)
-        pr, pc = np.clip(pr, 0, CHUNK - 1), np.clip(pc, 0, CHUNK - 1)
-        ok &= fp[pr, pc]
-        k = assign(lon, lat_).astype(np.int64) * 100000 + dist[pr, pc]
-        slot = np.array([index.get(int(v), -1) for v in k], int)
-        slot[~ok] = -1
-        return slot, ero[pr, pc], near[pr, pc]
+        def add(name, sel):
+            table[:, MI[name]] = np.bincount(inv, weights=area * sel, minlength=len(uk))
 
-    if len(segs):
-        slot, e, n = lookup(segs[:, 0], segs[:, 1])
-        for cls_, name in ((SEG_MAJOR, "major"), (SEG_MINOR, "minor"), (SEG_RAIL, "rail")):
-            s = segs[:, 3] == cls_
-            for z, flag in (("fp", np.ones(len(slot), bool)), ("ero", e), ("near", n)):
-                sel = s & flag & (slot >= 0)
-                np.add.at(table[:, MI[f"{name}_{z}"]], slot[sel], segs[sel, 2])
-    if len(pts):
-        slot, e, n = lookup(pts[:, 0], pts[:, 1])
-        for cls_, name in ((PT_BRIDGE, "bridge"), (PT_EDU, "edu"), (PT_HEALTH, "health"), (PT_PLACE, "place"), (PT_BLDG, "bldg"), (PT_DAM, "dam")):
-            s = pts[:, 2] == cls_
-            for z, flag in (("fp", np.ones(len(slot), bool)), ("ero", e), ("near", n)):
-                sel = s & flag & (slot >= 0)
-                np.add.at(table[:, MI[f"{name}_{z}"]], slot[sel], 1)
+        add("fp", np.ones(len(rows)))
+        add("water_then", o_then[rows, cols] >= WET_OCC)
+        add("water_now", o_now[rows, cols] >= WET_OCC)
+        add("perm_now", np.isin(t, (1, 2, 7)))
+        add("seas_now", np.isin(t, (4, 5, 8)))
+        add("ero_perm", c == 1)
+        add("ero_seas", c == 2)
+        add("acc_perm", c == 3)
+        add("acc_seas", c == 4)
+        add("passing", c == 6)
+
+        for g, name in enumerate(LC_GROUPS):
+            share = lc[g][rows, cols] / 9
+            for z, sel in zones.items():
+                table[:, MI[f"{name}_{z}"]] = np.bincount(inv, weights=area * share * sel, minlength=len(uk))
+
+        index = {int(k): i for i, k in enumerate(uk)}
+
+        def lookup(lon, lat_):
+            """Zone flags and table row for points; -1 where a point is outside the floodplain."""
+            pr, pc = to_rc(lon, lat_)
+            pr, pc = pr - r0, pc - c0
+            ok = (pr >= 0) & (pr < CHUNK) & (pc >= 0) & (pc < CHUNK)
+            pr, pc = np.clip(pr, 0, CHUNK - 1), np.clip(pc, 0, CHUNK - 1)
+            ok &= fp[pr, pc]
+            slot = np.array([index.get(int(v), -1) for v in point_key(lon, lat_, pr, pc)], int)
+            slot[~ok] = -1
+            return slot, ero[pr, pc], near[pr, pc]
+
+        if len(segs):
+            slot, e, n = lookup(segs[:, 0], segs[:, 1])
+            for cls_, name in ((SEG_MAJOR, "major"), (SEG_MINOR, "minor"), (SEG_RAIL, "rail")):
+                s = segs[:, 3] == cls_
+                for z, flag in (("fp", np.ones(len(slot), bool)), ("ero", e), ("near", n)):
+                    sel = s & flag & (slot >= 0)
+                    np.add.at(table[:, MI[f"{name}_{z}"]], slot[sel], segs[sel, 2])
+        if len(pts):
+            slot, e, n = lookup(pts[:, 0], pts[:, 1])
+            for cls_, name in ((PT_BRIDGE, "bridge"), (PT_EDU, "edu"), (PT_HEALTH, "health"), (PT_PLACE, "place"), (PT_BLDG, "bldg"), (PT_DAM, "dam")):
+                s = pts[:, 2] == cls_
+                for z, flag in (("fp", np.ones(len(slot), bool)), ("ero", e), ("near", n)):
+                    sel = s & flag & (slot >= 0)
+                    np.add.at(table[:, MI[f"{name}_{z}"]], slot[sel], 1)
+        return {int(k): table[i] for i, k in enumerate(uk)}
+
+    reach = assign(LON0 + (c0 + cols + 0.5) * RES, LAT0 - (r0 + rows + 0.5) * RES)
+    by_reach = tabulate(reach.astype(np.int64) * 100000 + dist[rows, cols],
+                        lambda lon, lat_, pr, pc: assign(lon, lat_).astype(np.int64) * 100000 + dist[pr, pc])
+
+    # The same figures per union council or tehsil, for the map popup
+    by_unit = {}
+    if _W["unit_tree"] is not None:
+        hits = _W["unit_tree"].query(box(*rasterio.transform.array_bounds(CHUNK, CHUNK, tf)))
+        if len(hits):
+            units = features.rasterize([(_W["units"][i], int(i) + 1) for i in hits], out_shape=(CHUNK, CHUNK), transform=tf, fill=0, dtype="int32")
+            by_unit = tabulate(units[rows, cols].astype(np.int64), lambda lon, lat_, pr, pc: units[pr, pc])
+            by_unit.pop(0, None)
+
+    # And per grid cell with eroded ground, for the erosion dots
+    cell = lambda r, c: (r0 + r) // CELL * 100000 + (c0 + c) // CELL
+    by_cell = tabulate(cell(rows, cols).astype(np.int64), lambda lon, lat_, pr, pc: cell(pr, pc))
+    by_cell = {k: v for k, v in by_cell.items() if v[MI["ero_perm"]] + v[MI["ero_seas"]] > 0}
 
     raster = np.where(fp, classes, 255).astype(np.uint8)
-    return {int(k): table[i] for i, k in enumerate(uk)}, zlib.compress(raster.tobytes(), 6), r0, c0
+    return by_reach, by_unit, by_cell, zlib.compress(raster.tobytes(), 6), r0, c0
 
 
 def extract_osm():
@@ -562,11 +585,19 @@ def main():
 
     table = {}
     route_xy = np.column_stack([R[:, 0] * 96.4, R[:, 1] * 110.574])
-    init = (shapely.to_wkb(fp), [shapely.to_wkb(g) for g in dgeoms], list(range(len(dgeoms))), route_xy)
+    units_path = DATA_OUT / "admin_units.geojson"
+    units_fc = json.loads(units_path.read_text(encoding="utf-8")) if units_path.exists() else {"features": [], "level": None}
+    init = (shapely.to_wkb(fp), [shapely.to_wkb(g) for g in dgeoms], list(range(len(dgeoms))), route_xy,
+            [shapely.to_wkb(shape(f["geometry"])) for f in units_fc["features"]])
+    unit_table = {}
+    cell_table = {}
     with ProcessPoolExecutor(max_workers=min(8, max(2, (os.cpu_count() or 4) - 2)), initializer=_init, initargs=init) as ex:
-        for i, (rows, raster, r0, c0) in enumerate(ex.map(process_chunk, jobs, chunksize=1), 1):
+        for i, (rows, unit_rows, cell_rows, raster, r0, c0) in enumerate(ex.map(process_chunk, jobs, chunksize=1), 1):
             for k, v in rows.items():
                 table[k] = table.get(k, 0) + v
+            for k, v in unit_rows.items():
+                unit_table[k] = unit_table.get(k, 0) + v
+            cell_table.update(cell_rows)
             if raster is not None:
                 key = (c0 // GRANULE, r0 // GRANULE)
                 win = Window(c0 - key[0] * GRANULE, r0 - key[1] * GRANULE, CHUNK, CHUNK)
@@ -575,6 +606,7 @@ def main():
                 print(f"  chunk {i}/{len(jobs)}  {time.time() - t0:.0f}s", flush=True)
     for d in sinks.values():
         d.close()
+    np.savez(CACHE / "erosion_cells.npz", keys=np.array(list(cell_table), np.int64), values=np.array(list(cell_table.values())), metrics=METRICS)
 
     # ------------------------------------------------------------ tables
     reach_total, area_total = {}, {}
@@ -743,6 +775,11 @@ def main():
     print("Writing", flush=True)
     dumps(DATA_OUT / "floodplain.json", data)
     dumps(DATA_OUT / "fp_sections.json", {"sections": sections})
+    # Unit ids are 1-based positions in admin_units.geojson
+    dumps(DATA_OUT / "unit_effects.json", {
+        "level": units_fc.get("level"), "metrics": METRICS, "buildings": bld_source,
+        "units": {str(k): [round(float(x), 3) for x in v] for k, v in sorted(unit_table.items())},
+    })
     dumps(DATA_OUT / "fp_transects.geojson", {"type": "FeatureCollection", "features": transects})
     dumps(DATA_OUT / "floodplain.geojson", {"type": "FeatureCollection", "features": [
         {"type": "Feature", "properties": {}, "geometry": rounded(mapping(shapely.simplify(fp, 0.0005)))}]})
@@ -765,6 +802,9 @@ def main():
     dumps(DATA_OUT / "fp_infra.geojson", {"type": "FeatureCollection", "features": infra})
 
     v = dict(zip(METRICS, total))
+    if unit_table:
+        print(f"{units_fc.get('level')}s touching the floodplain: {len(unit_table)}; floodplain area they cover "
+              f"{sum(u[MI['fp']] for u in unit_table.values()):,.0f} of {v['fp']:,.0f} km2; buildings {sum(u[MI['bldg_fp']] for u in unit_table.values()):,.0f} of {v['bldg_fp']:,.0f}")
     print(f"\nFloodplain {v['fp']:,.0f} km2  water then {v['water_then']:,.0f}  now {v['water_now']:,.0f}  "
           f"eroded to permanent {v['ero_perm']:,.0f}, to seasonal {v['ero_seas']:,.0f}  regained {v['acc_perm'] + v['acc_seas']:,.0f}  no lasting change {v['passing']:,.0f}")
     print(f"Cropland: fp {v['crop_fp']:,.0f}, eroded zone {v['crop_ero']:,.0f}, near bank {v['crop_near']:,.0f} km2")

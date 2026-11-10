@@ -97,7 +97,18 @@
       <div class="section">
         <div class="eyebrow">Overlays</div>
         <div id="overlays" class="toggles"></div>
+        <div class="type-head">Water type</div>
+        <div id="water-type-toggles" class="toggles"></div>
+        <div class="hint type-hint">Likely types, inferred from location and how often the ground is wet, across 1984–2024 with no dates. Seasonal water mixes floods, high river flow, rain ponding and flooded fields. Types switched on paint over the data layer.</div>
         <div id="ww-legend" class="ww-legend"></div>
+        <div id="dots-legend" class="choro-legend dots-legend">
+          <div class="dots-key mono">
+            <span><i style="--d:10px"></i>1 km²</span>
+            <span><i style="--d:18px"></i>25 km²</span>
+            <span><i style="--d:31px"></i>400 km²</span>
+          </div>
+          <div class="hint">Blinking dots: land eroded or newly wet since the 1980s, Indus floodplain only. Size shows the area; labels say what stands on it. Click a dot for the villages and infrastructure.</div>
+        </div>
         <div id="bld-legend" class="choro-legend" hidden>
           <div class="ramp"></div>
           <div class="ramp-labels mono"><span>≤3 m</span><span>6</span><span>10</span><span>16 m+</span></div>
@@ -114,9 +125,9 @@
       <div class="source-note">
         Landsat-derived <b>JRC Global Surface Water v1.5</b> at 30 m, clipped to Pakistan.
         Rivers, canals and streams: WaterWays_Pakistan.
-        Erosion and cross-sections: JRC Global Surface Water (Landsat), ESA WorldCover 2021 (Sentinel-1/2), Copernicus DEM.
+        Erosion and cross-sections: JRC Global Surface Water (Landsat), ESA WorldCover 2021 (Sentinel-1/2), Copernicus DEM. Sukkur reach detail: NDMA Earth Engine exports, 20 m.
         Settlements: GeoNames and OpenStreetMap. Buildings: Google Open Buildings and OpenStreetMap, from the NDMA tile server.
-        National boundary: official Pakistan boundary; provinces and districts: geoBoundaries (gbOpen), clipped to it.
+        National boundary: official Pakistan boundary. Provinces, districts and tehsils: project boundary files. Water types use OpenStreetMap water outlines.
         Click anywhere on the map to read pixel values.
       </div>
     </div>
@@ -137,6 +148,15 @@
       <div id="kpi-hero" class="kpi-hero"></div>
       <div id="kpi-grid" class="kpi-grid"></div>
 
+      <div class="section" id="monthly-section" hidden>
+        <div class="row-between">
+          <div class="eyebrow"><span id="mc-kind">Monthly water</span> · <span id="mc-scope"></span></div>
+        </div>
+        <div class="mc-legend" id="mc-legend"></div>
+        <div class="mc-wrap"><svg id="mc-svg" role="img" aria-label="Water over time"></svg><div id="mc-tip" class="mc-tip" hidden></div></div>
+        <div class="hint" id="mc-hint"></div>
+      </div>
+
       <div class="section">
         <div class="row-between">
           <div class="eyebrow">Water dynamics · 1984 → 2024</div>
@@ -147,9 +167,19 @@
 
       <div class="section">
         <div class="row-between">
+          <div class="eyebrow">Likely water type · 1984–2024 combined</div>
+        </div>
+        <div id="type-bar" class="composition"></div>
+        <ul id="type-legend" class="composition-legend type-legend"></ul>
+        <div class="hint">Inferred from location and how often the ground is wet, not an observed cause. Seasonal water mixes floods, high river flow, rain ponding and flooded fields. Click a type to switch it on or off on the map.</div>
+      </div>
+
+      <div class="section">
+        <div class="row-between">
           <div class="eyebrow" id="rank-title">Provinces &amp; territories</div>
         </div>
         <div id="metric-tabs" class="tabs" role="tablist"></div>
+        <div id="highlight-note" class="highlight-note" hidden></div>
         <ol id="ranking" class="ranking"></ol>
       </div>
     </div>
@@ -162,6 +192,20 @@
   </div>
 
   <!-- Status bar -->
+  <div id="time-chip" class="time-chip glass" role="status"></div>
+  <div id="timebar" class="timebar glass" hidden>
+    <button type="button" class="tb-step" id="tb-prev" aria-label="Previous month">‹</button>
+    <div class="tb-body">
+      <div class="tb-head">
+        <b id="tb-month"></b><span id="tb-seen"></span>
+        <span class="tb-key" id="tb-key"></span>
+      </div>
+      <canvas id="tb-strip"></canvas>
+      <input type="range" id="tb-range" min="0" max="0" step="1" value="0" aria-label="Month">
+      <div class="tb-years mono" id="tb-years"></div>
+    </div>
+    <button type="button" class="tb-step" id="tb-next" aria-label="Next month">›</button>
+  </div>
   <footer class="statusbar glass">
     <div class="zoom-group">
       <button id="zoom-out" title="Zoom out" aria-label="Zoom out"><svg viewBox="0 0 24 24"><path d="M6 12h12"/></svg></button>

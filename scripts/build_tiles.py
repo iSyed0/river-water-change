@@ -258,7 +258,8 @@ def existing_tiles(layer, z):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--layers", nargs="+", default=list(LAYERS), choices=list(LAYERS))
+    built_here = [k for k in LAYERS if not LAYERS[k].get("separate_tiles")]
+    ap.add_argument("--layers", nargs="+", default=built_here, choices=built_here)
     ap.add_argument("--maxzoom", type=int, default=MAX_ZOOM)
     ap.add_argument("--minzoom", type=int, default=0)
     ap.add_argument("--workers", type=int, default=min(8, max(1, (os.cpu_count() or 2) - 2)))
