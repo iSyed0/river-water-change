@@ -165,6 +165,14 @@ LAYERS["watertype"] = {
                5: _hex("#14a37f")},  # coast and tidal water
 }
 
+# Water sources: groups of the water types above. build_tiles.py --group writes each layer again with only that
+# group's water, so the portal can show any layer for one source.
+WATER_GROUPS = {
+    "river": (1, 3),    # river channels and canals, and the seasonal water of their beds and floodplains
+    "flood": (4,),      # seasonal water away from rivers: floods, rain ponding, flooded fields
+    "lakes": (2, 5),    # lakes, reservoirs, coast and tidal water
+}
+
 # Tiles written by prepare_land_change.py, not by build_tiles.py
 LAYERS["landloss"] = {
     "separate_tiles": True,

@@ -13,8 +13,11 @@ fields together. Each water pixel gets the first type that fits:
   regular water that matches none of these (a farm pond, say) counts as type 2
 
 Outputs:
-  watertype/watertype_*_v1_5_2024.tif   source of the "watertype" map layer (build_tiles.py --layers watertype)
-  portal/data/water_types.json          km2 of each type: national, per province, per district
+  watertype/watertype_*_v1_5_2024.tif   source of the "watertype" map layer (build_tiles.py --layers watertype) and
+                                        of the water source tiles (build_tiles.py --group)
+  portal/data/water_types.json          km2 of each type: national, per province, per district; and for each water
+                                        source (common.WATER_GROUPS) the Insights figures: extent, permanent, seasonal,
+                                        gained and lost water, from the JRC transitions as in compute_stats.py
 
     python scripts/prepare_water_types.py     (after prepare_boundaries.py, prepare_rivers.py, analyse_floodplain.py)
 """
@@ -38,7 +41,11 @@ from rasterio.windows import Window
 from scipy.ndimage import binary_dilation, distance_transform_edt, generate_binary_structure, label
 from shapely.geometry import box, shape
 
-from common import DATA_OUT, GRANULE, GRANULES, LAT0, LON0, RES, ROOT, granule_path, national_boundary, national_outline
+from common import (DATA_OUT, GRANULE, GRANULES, LAT0, LON0, RES, ROOT, WATER_GROUPS, granule_path, national_boundary,
+                    national_outline)
+from compute_stats import DERIVED
+
+NCLS = 11               # JRC transition classes 1-10, and 0 for none
 
 CHUNK = 2000            # JRC pixels, 0.5 degrees
 PAD = 1000              # read around a chunk: a river is judged over about 100 km, not one chunk
@@ -78,7 +85,7 @@ def process_chunk(args):
     ext = mosaic("extent", *win) == 1
     inner = (slice(PAD, -PAD), slice(PAD, -PAD))
     if not ext[inner].any():
-        return r0, c0, None, np.zeros((0, len(TYPES) + 1)), np.zeros(len(TYPES) + 1)
+        return r0, c0, None, np.zeros((0, 4)), np.zeros((len(TYPES) + 1) * NCLS)
     occ = mosaic("occurrence", *win)
     regular = ext & (occ >= REGULAR_OCC) & (occ <= 100)
 
@@ -126,9 +133,12 @@ def process_chunk(args):
     if len(hits):
         dist = features.rasterize([(_W["districts"][h], int(_W["district_ids"][h])) for h in hits], out_shape=(CHUNK, CHUNK), transform=tf_in, fill=0, dtype="int32")
     wet = out != 255
-    per_district = np.column_stack([dist[wet], out[wet], area[wet]])
+    tr = mosaic("transitions", r0, r0 + CHUNK, c0, c0 + CHUNK)
+    tr = np.where(tr <= 10, tr, 0).astype(np.int64)
+    per_district = np.column_stack([dist[wet], out[wet], tr[wet], area[wet]])
     national_mask = features.rasterize([(_W["pakistan"], 1)], out_shape=(CHUNK, CHUNK), transform=tf_in, fill=0, dtype="uint8").astype(bool)
-    national = np.bincount(out[wet & national_mask], weights=area[wet & national_mask], minlength=len(TYPES) + 1)
+    sel = wet & national_mask
+    national = np.bincount(out[sel].astype(np.int64) * NCLS + tr[sel], weights=area[sel], minlength=(len(TYPES) + 1) * NCLS)
     return r0, c0, zlib.compress(out.tobytes(), 6), per_district, national
 
 
@@ -201,32 +211,54 @@ def main():
         sinks[key] = rasterio.open(path, "w", transform=tf, **profile)
 
     ids = [f["properties"]["id"] for f in districts]
-    by_district = np.zeros((max(ids) + 1, len(TYPES) + 1))
-    national = np.zeros(len(TYPES) + 1)
-    with ProcessPoolExecutor(max_workers=min(5, max(2, (os.cpu_count() or 4) - 2)), initializer=_init, initargs=(wkb, ids)) as ex:
+    # Area by district, water type and transition class
+    by_class = np.zeros((max(ids) + 1, len(TYPES) + 1, NCLS))
+    national_class = np.zeros((len(TYPES) + 1) * NCLS)
+    with ProcessPoolExecutor(max_workers=min(3, max(2, (os.cpu_count() or 4) - 2)), initializer=_init, initargs=(wkb, ids)) as ex:
         for i, (r0, c0, raster, per, nat) in enumerate(ex.map(process_chunk, jobs, chunksize=1), 1):
             if raster is not None:
                 key = (c0 // GRANULE, r0 // GRANULE)
                 win = Window(c0 - key[0] * GRANULE, r0 - key[1] * GRANULE, CHUNK, CHUNK)
                 sinks[key].write(np.frombuffer(zlib.decompress(raster), np.uint8).reshape(CHUNK, CHUNK), 1, window=win)
-                np.add.at(by_district, (per[:, 0].astype(int), per[:, 1].astype(int)), per[:, 2])
-                national += nat
+                np.add.at(by_class, (per[:, 0].astype(int), per[:, 1].astype(int), per[:, 2].astype(int)), per[:, 3])
+                national_class += nat
             if i % 50 == 0 or i == len(jobs):
                 print(f"  chunk {i}/{len(jobs)}  {time.time() - t0:.0f}s", flush=True)
     for d in sinks.values():
         d.close()
 
+    national_class = national_class.reshape(len(TYPES) + 1, NCLS)
+    by_district = by_class.sum(-1)
+    national = national_class.sum(-1)
     rnd = lambda row: [round(float(v), 2) for v in row[1:]]
     provinces = {}
+    prov_class = {}
     for f in districts:
         p = f["properties"]["province"]
         provinces[p] = provinces.get(p, 0) + by_district[f["properties"]["id"]]
+        prov_class[p] = prov_class.get(p, 0) + by_class[f["properties"]["id"]]
+
+    def figures(cls_by_type, group):
+        """The Insights figures for one water source, from areas by water type and transition class."""
+        c = cls_by_type[list(WATER_GROUPS[group])].sum(0)
+        out = {"extent_km2": round(float(c.sum()), 2)}
+        for name, classes in DERIVED.items():
+            out[f"{name}_km2"] = round(float(c[classes].sum()), 2)
+        return out
+
+    sources = {g: {"national": figures(national_class, g),
+                   "provinces": {k: figures(v, g) for k, v in prov_class.items()},
+                   "districts": {str(f["properties"]["id"]): figures(by_class[f["properties"]["id"]], g) for f in districts}}
+               for g in WATER_GROUPS}
     out = {"types": TYPES, "regular_occurrence": REGULAR_OCC, "near_river_km": NEAR_RIVER_KM, "national": rnd(national),
            "provinces": {k: rnd(v) for k, v in provinces.items()},
-           "districts": {str(f["properties"]["id"]): rnd(by_district[f["properties"]["id"]]) for f in districts}}
+           "districts": {str(f["properties"]["id"]): rnd(by_district[f["properties"]["id"]]) for f in districts},
+           "groups": {g: list(t) for g, t in WATER_GROUPS.items()}, "sources": sources}
     (DATA_OUT / "water_types.json").write_text(json.dumps(out, separators=(",", ":")), encoding="utf-8")
     for name, v in zip(TYPES, national[1:]):
         print(f"  {name}: {v:,.0f} km2 ({v / national.sum() * 100:.0f}%)")
+    for g in WATER_GROUPS:
+        print(f"  source {g}: " + ", ".join(f"{k} {v:,.0f}" for k, v in sources[g]["national"].items()))
     print(f"Total {national.sum():,.0f} km2; done {time.time() - t0:.0f}s")
 
 

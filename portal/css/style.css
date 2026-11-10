@@ -657,13 +657,11 @@ body.touring .time-chip { display: none; }
 .layer-card .when { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
 .layer-card .when b { color: var(--text); font-weight: 600; }
 .kpi-when { margin-top: 2px; color: var(--faint); font-size: 10.5px; }
-.type-head { margin: 12px 4px 4px; font: 600 11px var(--font); color: var(--muted); }
-.type-swatch { width: 14px; height: 14px; margin: 0 1px; border-radius: 4px; }
-.type-hint { margin: 6px 4px 8px; }
 .type-legend li { display: block; }
 .type-legend button { display: grid; grid-template-columns: 12px 1fr auto auto; align-items: center; gap: 8px; width: 100%; padding: 3px 4px; border: 0; border-radius: 6px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }
 .type-legend button:hover { background: rgba(255, 255, 255, .05); }
-.type-legend button[aria-pressed="true"] { background: rgba(255, 255, 255, .1); color: var(--text); }
+.type-legend button[aria-pressed="true"], .type-legend button[aria-checked="true"] { background: rgba(255, 255, 255, .1); color: var(--text); }
+.type-legend button[aria-checked="true"] { box-shadow: inset 2px 0 0 var(--accent); }
 .type-legend + .hint { margin-top: 8px; }
 
 .layer-card .proto { margin-left: 7px; padding: 1px 6px; border: 1px solid rgba(253, 224, 71, .45); border-radius: 6px; color: #fde047; font: 600 9.5px var(--font); letter-spacing: .04em; text-transform: uppercase; vertical-align: 1px; }

@@ -12,6 +12,9 @@ Three stages:
 
     python scripts/build_tiles.py                  # all layers, z0-12
     python scripts/build_tiles.py --layers extent  # one layer
+    python scripts/build_tiles.py --group river --layers extent occurrence recurrence change transitions
+                                                   # only one water source (common.WATER_GROUPS), from the watertype
+                                                   # rasters, into portal/tiles/source/<group>/
 """
 import argparse
 import atexit
@@ -33,7 +36,7 @@ from rasterio.windows import Window
 from shapely.ops import transform as shp_transform
 
 from common import (DATA_OUT, GRANULE, LAT0, LAYERS, LON0, MAX_ZOOM, MOSAIC,
-                    NODATA, RES, ROOT, TILE, TILES, granule_path, national_outline)
+                    NODATA, RES, ROOT, TILE, TILES, WATER_GROUPS, granule_path, national_outline)
 
 EARTH_R = 6378137.0
 ORIGIN = math.pi * EARTH_R
@@ -103,9 +106,19 @@ def to_mercator(geom):
 _W = {}
 
 
-def _init(clip_geom_merc, layers):
+def set_group(group):
+    """Point the raw and display pyramids at one water source's folders."""
+    global RAW, TILES
+    if group:
+        RAW = ROOT / "build" / "raw" / "source" / group
+        TILES = TILES / "source" / group
+
+
+def _init(clip_geom_merc, layers, group=None):
     _W["clip"] = clip_geom_merc
     _W["layers"] = layers
+    _W["group"] = group
+    set_group(group)
     _W["ds"] = {}
     atexit.register(lambda: [d.close() for d in _W["ds"].values()])
 
@@ -170,6 +183,10 @@ def render_row(z, y, xmin, xmax):
             yield x, np.ascontiguousarray(band[:, i * TILE:(i + 1) * TILE])
 
     extent = sample("extent")
+    keep = None
+    if _W["group"]:
+        keep = np.isin(sample("watertype"), WATER_GROUPS[_W["group"]])
+        extent = np.where(keep, extent, NODATA).astype(np.uint8)
     cover = np.where(extent == 1, 255, 0).astype(np.uint8)
     for x, t in tiles(cover):
         if t.any():
@@ -178,6 +195,8 @@ def render_row(z, y, xmin, xmax):
     written = 0
     for layer in _W["layers"]:
         band = extent if layer == "extent" else sample(layer)
+        if keep is not None and layer != "extent":
+            band[~keep] = NODATA
         for x, t in tiles(band):
             if VISIBLE[layer][t].any():
                 save_palette(RAW, layer, z, x, y, t)
@@ -264,7 +283,9 @@ def main():
     ap.add_argument("--minzoom", type=int, default=0)
     ap.add_argument("--workers", type=int, default=min(8, max(1, (os.cpu_count() or 2) - 2)))
     ap.add_argument("--no-clip", action="store_true", help="keep water outside Pakistan's boundary")
+    ap.add_argument("--group", choices=sorted(WATER_GROUPS), help="only this water source, into portal/tiles/source/<group>/")
     args = ap.parse_args()
+    set_group(args.group)
 
     for layer in args.layers + [COVER]:
         shutil.rmtree(RAW / layer, ignore_errors=True)
@@ -279,7 +300,7 @@ def main():
     x1, y1 = lonlat_to_tile(lon_max, lat_min, z)
     t = time.time()
     print(f"z{z}: rows {y0}-{y1}, cols {x0}-{x1}, layers {args.layers}, {args.workers} workers")
-    with ProcessPoolExecutor(args.workers, initializer=_init, initargs=(clip, args.layers)) as ex:
+    with ProcessPoolExecutor(args.workers, initializer=_init, initargs=(clip, args.layers, args.group)) as ex:
         futs = [ex.submit(render_row, z, y, x0, x1) for y in range(y0, y1 + 1)]
         total = 0
         for i, f in enumerate(futs, 1):
@@ -300,6 +321,9 @@ def main():
         n = sum(ex.map(build_display, display, chunksize=64))
         print(f"display: {n} tiles  {time.time() - t:.0f}s", flush=True)
 
+    if args.group:
+        print("done", f"{time.time() - t:.0f}s")
+        return
     DATA_OUT.mkdir(parents=True, exist_ok=True)
     pal = {k: {str(v): list(rgb) for v, rgb in LAYERS[k]["colors"].items()} for k in LAYERS}
     (DATA_OUT / "palettes.json").write_text(json.dumps(pal, separators=(",", ":")), encoding="utf-8")

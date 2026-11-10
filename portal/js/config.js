@@ -21,29 +21,30 @@ window.PORTAL_CONFIG = {
     { id: 'terrain', label: 'Terrain', style: 'mapbox://styles/mapbox/outdoors-v12', mask: 0.45 },
   ],
 
+  // A layer with off: true is left out of the portal; remove the flag to bring it back
   layers: [
     {
-      id: 'extent', short: 'Extent', name: 'Maximum Water Extent', tag: 'Ever observed · 1984–2024',
+      id: 'extent', short: 'Extent', name: 'Maximum Water Extent', tag: 'Ever observed · 1984–2024', sourced: true,
       when: 'Wet at least once at any time in 1984–2024. It does not say when.',
       desc: 'Every location where surface water was detected at least once in four decades of Landsat imagery: the outer envelope of rivers, lakes, reservoirs and floods.',
       legend: { type: 'single', label: 'Water detected at least once' },
     },
     {
       // Month by month, from the Earth Engine exports (scripts/prepare_timeline.py). Each tile holds three months, one per colour channel.
-      id: 'monthly', short: 'Monthly', name: 'Monthly Water', tag: 'Month by month · 1984–2021', timeline: 'month', prototype: true,
+      id: 'monthly', short: 'Seasonality', name: 'Seasonality', tag: 'Month by month · 1984–2021', timeline: 'month',
       when: 'One month at a time, March 1984 to December 2021. Pick the month below the map.',
-      desc: 'Water seen each month, against the usual water for that calendar month in 2000–2021. Water well above usual is the likely sign of a flood, though rain ponding and flooded fields can look the same. Grey is ground the satellite could not see that month, through cloud or a missing image. Before about 2000 most months are largely unseen.',
+      desc: 'Which months water is present: the water seen each month, against the usual water for that calendar month in 2000–2021. Water well above usual is the likely sign of a flood, though rain ponding and flooded fields can look the same. Grey is ground the satellite could not see that month, through cloud or a missing image. Before about 2000 most months are largely unseen.',
       legend: { type: 'monthly' },
     },
     {
       // Year by year, from the same exports: permanent, seasonal and above-usual seasonal water (scripts/prepare_timeline.py)
-      id: 'yearly', short: 'Yearly', name: 'Yearly Water', tag: 'Year by year · 1984–2021', timeline: 'year', prototype: true,
+      id: 'yearly', short: 'Yearly', name: 'Yearly Water', tag: 'Year by year · 1984–2021', timeline: 'year', prototype: true, off: true,
       when: 'One year at a time, 1984 to 2021. Pick the year below the map.',
       desc: 'Each year\'s water sorted the way JRC sorts it: permanent water, wet in nearly every month it was seen, is rivers, canals and lakes; seasonal water, wet in some months, is floods, rain ponding and irrigation. Seasonal water well above usual in two or more months of the year is the likely flood. Brighter means more of the ground under water. Grey is ground seen in fewer than three months; before about 2000 much of the country is.',
       legend: { type: 'yearly' },
     },
     {
-      // An overlay, with one switch per type: not offered as a data layer
+      // Not a map layer: its tiles name the water type in the pixel popup. The water sources (below) group these types
       id: 'watertype', short: 'Type', name: 'Water types', overlay: true,
       when: 'All of 1984–2024 combined, sorted by location and how often it is wet. It has no dates.',
       legend: { type: 'classes', classes: {
@@ -51,31 +52,32 @@ window.PORTAL_CONFIG = {
       } },
     },
     {
-      id: 'occurrence', short: 'Occurrence', name: 'Water Occurrence', tag: 'Frequency · % of observations',
+      id: 'occurrence', short: 'Occurrence', name: 'Water Occurrence', tag: 'Frequency · % of observations', sourced: true,
       when: 'All of 1984–2024 combined into one figure.',
       desc: 'How often water was present across all valid observations. Low values mark flood-prone ground; 100% marks permanent rivers, lakes and reservoirs.',
       legend: { type: 'ramp', min: 1, max: 100, labels: ['1%', '50%', '100%'], ends: ['Rarely wet', 'Always wet'] },
     },
     {
-      id: 'seasonality', short: 'Seasonality', name: 'Seasonality', tag: 'Months of water · 2024',
+      id: 'seasonality', short: 'Months', name: 'Months of Water (2024)', tag: 'Months of water · 2024', off: true,
       when: '2024 only.',
       desc: 'Number of months water was present during the most recent year. Short durations show monsoon and flood-season water.',
       legend: { type: 'steps', min: 1, max: 12, labels: ['1 mo', '6', '12 months'] },
     },
     {
-      id: 'recurrence', short: 'Recurrence', name: 'Recurrence', tag: 'Inter-annual return · %',
+      id: 'recurrence', short: 'Recurrence', name: 'Recurrence', tag: 'Inter-annual return · %', sourced: true,
       when: 'All of 1984–2024 combined: the share of years with water.',
       desc: 'How reliably water returns from year to year. High recurrence with low occurrence points to areas flooded every monsoon.',
       legend: { type: 'ramp', min: 1, max: 100, labels: ['1%', '50%', '100%'], ends: ['Irregular', 'Every year'] },
     },
     {
-      id: 'change', short: 'Change', name: 'Occurrence Change', tag: '1984–99 vs 2000–24',
+      id: 'change', short: 'Change', name: 'Occurrence Change', tag: '1984–99 vs 2000–24', sourced: true,
       when: 'Two periods compared: 1984–99 and 2000–24.',
       desc: 'Change in water occurrence between the two epochs. Red shows drying or loss; green shows new or more frequent water.',
       legend: { type: 'ramp', min: 0, max: 200, labels: ['−100%', '0', '+100%'], ends: ['Loss', 'Gain'] },
     },
     {
-      id: 'transitions', short: 'Transition', name: 'Water Transitions', tag: 'Class change · 1984 → 2024',
+      // No card: the Permanent, Seasonal, Gained and Lost tabs of the Insights panel draw from these tiles
+      id: 'transitions', short: 'Transition', name: 'Water Transitions', tag: 'Class change · 1984 → 2024', card: false, sourced: true,
       when: 'Two years compared: 1984 and 2024. It does not say when the change happened.',
       desc: 'How each pixel changed between the first and last year: permanent, seasonal, new, lost and ephemeral water.',
       legend: { type: 'classes' },
@@ -98,6 +100,15 @@ window.PORTAL_CONFIG = {
       desc: 'Where the Indus moved near Sukkur between the winters of 2018–19 and 2025–26, from Sentinel-2 at low flow: land the channel took, and land left behind as it moved away. Covers about 100 km of river, inside the floodplain.',
       legend: { type: 'classes', classes: { 1: 'Land lost to the river', 2: 'Land deposited', 3: 'Water in both' } },
     },
+  ],
+
+  // Water sources: groups of water types (scripts/common.py WATER_GROUPS). Layers marked sourced: true have tiles for
+  // each, in tiles/source/<id>/; the Insights figures follow too.
+  sources: [
+    { id: 'all', name: 'All water', color: '#22d3ee', about: 'Everything the satellites saw' },
+    { id: 'river', name: 'River system', color: '#2f6fd6', about: 'River channels and canals, and the seasonal water of their beds: in the Indus floodplain or within 5 km of a mapped river' },
+    { id: 'flood', name: 'Floods and rain', color: '#f2c94c', about: 'Seasonal water away from rivers: floods, rain ponding and flooded fields' },
+    { id: 'lakes', name: 'Lakes and coast', color: '#9fd3ff', about: 'Lakes, reservoirs, coastal and tidal water' },
   ],
 
   // Transition class names, mirrors scripts/common.py

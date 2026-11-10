@@ -16,29 +16,36 @@ Open http://127.0.0.1:8765. The page has to come from a web server; opening
 ## What's in the portal
 
 - **Globe with an opening fly-in**, night, satellite and terrain basemaps, and optional 3D terrain.
-- **Six water layers:** maximum extent, occurrence, seasonality, recurrence, occurrence change, and transitions.
+- **Water layers:** maximum extent, seasonality (month by month), occurrence, recurrence and occurrence change. The
+  one-year Months of Water and the Yearly Water layers are switched off with `off: true` in `js/config.js`; Water
+  Transitions has no card (`card: false`) but its tiles feed the Insights tabs.
 - **Click any area** for its tehsil or union council and the effect of river change there: land taken and
   regained, plus buildings, villages, cropland, roads, railway, schools, health facilities and bridges in the
   floodplain, on eroded ground and near the river. The 30 m water values at that spot fold out below; a click on
   dry ground snaps to the nearest water pixel and shows how far away it is.
-- **Insights panel:** national, province and district figures for maximum extent, permanent, seasonal, gained and lost water. It also shows the 1984→2024 transition mix and a sortable ranking.
-- **Monthly Water layer (timeline, prototype):** any month from March 1984 to December 2021, picked with the slider under the
+- **Insights panel:** national, province and district figures for maximum extent, permanent, seasonal, gained and lost water. It also has the water source switch and a sortable ranking.
+- **Seasonality layer (monthly water):** any month from March 1984 to December 2021, picked with the slider under the
   map. Water is marked as usual for that calendar month or well above usual (the likely flood signal), and ground the
   satellite could not see is grey. The Insights panel charts the selected region's water month by month against its
   usual level. See *Timeline data* below.
-- **Yearly Water layer (prototype):** any year from 1984 to 2021, sorted the way JRC's yearly classification sorts water:
+- **Yearly Water layer (prototype; switched off for now with `off: true` in `js/config.js`):** any year from 1984 to 2021, sorted the way JRC's yearly classification sorts water:
   permanent water (wet in nearly every month it was seen: rivers, canals, lakes) bright and strong, seasonal water
   (floods, rain ponding, irrigation) pale, and seasonal water well above usual in two or more months of the year in
   orange, the likely flood. The Insights panel shows stacked bars per year for the selected region.
-- **Water type overlays:** one switch each for river or canal, lake or reservoir, seasonal water near a river,
-  seasonal water away from rivers, and coast and tidal water, shown over whichever layer is open. These are inferred,
-  not observed: see *Water types* below. The Insights panel gives each type's area for the selected region.
+- **Water source** (Insights panel): All water, River system, Floods and rain, or Lakes and coast. Picking one shows
+  only that water on Extent, Occurrence, Recurrence and Occurrence Change, and switches the figures, tabs and rankings
+  to it. River system is river channels and canals with the seasonal water of their beds (in the Indus floodplain or
+  within 5 km of a mapped river); Floods and rain is seasonal water away from rivers. Each of those layers has a copy
+  per source in `portal/tiles/source/<source>/`, written by `build_tiles.py --group`.
+- **Water type in the popup:** clicking the map names the likely water type there (river or canal, lake or
+  reservoir, seasonal water near a river, seasonal water away from rivers, coast and tidal water). These are inferred,
+  not observed: see *Water types* below.
 - **Time covered:** every layer, tab and figure says what period it covers, and a label above the status bar names
   what the map shows now.
 - **Map highlight:** selecting a province or district, or a tab in the Insights panel (Extent, Permanent, Seasonal,
   Gained, Lost), shows that tab's water on the map and dims everything outside the region. Picking a data layer
   or *Back to data layer* returns to the layer.
-- **Overlays:** focus mask outside Pakistan, province, district and tehsil boundaries, a district water-index choropleth, and labels. Tehsil lines load from zoom 7.5 and their names show from zoom 9.
+- **Overlays:** focus mask outside Pakistan, province, district and tehsil boundaries, and labels. Tehsil lines load from zoom 7.5 and their names show from zoom 9.
 - **Rivers and canals** from `WaterWays_Pakistan.geojson`: rivers, canals, nalas/streams, qanats
   and the unnamed network, each styled differently and labelled along their course.
   Hovering or clicking shows the waterway's name.
@@ -137,6 +144,9 @@ python scripts/prepare_places.py       # ~15 s, after prepare_boundaries.py
 python scripts/prepare_admin_units.py  # ~1 min, after prepare_boundaries.py
 python scripts/prepare_timeline.py     # ~30 min, after prepare_boundaries.py; needs ndma water monthly/
 python scripts/prepare_water_types.py  # after prepare_rivers.py, analyse_floodplain.py; then build_tiles.py --layers watertype
+python scripts/build_tiles.py --group river --layers extent occurrence recurrence change transitions   # ~5 min each;
+python scripts/build_tiles.py --group flood --layers extent occurrence recurrence change transitions   # after
+python scripts/build_tiles.py --group lakes --layers extent occurrence recurrence change transitions   # prepare_water_types.py
 python scripts/prepare_floodplain.py   # ~3 min first time, after prepare_indus.py
 python scripts/analyse_floodplain.py   # ~5 min first time, after prepare_floodplain.py, prepare_places.py
 python scripts/build_tiles.py --layers erosion   # after analyse_floodplain.py
@@ -312,8 +322,7 @@ How to read it:
 - **Boundaries:** to change provinces, districts or tehsils, replace the files in `boundries/` (fields
   `Province`, `Districts`, `name`) and re-run the scripts from `prepare_boundaries.py` on.
 - **Basemap borders:** Mapbox's own country borders, and its state labels inside the
-  official outline, are hidden so they can't contradict the official boundary. The
-  "Basemap borders" toggle brings the borders back.
+  official outline, are always hidden so they can't contradict the official boundary.
 - **Building server:** set in `buildings` in `js/config.js`. `172.18.1.142` is a private
   address, so buildings show only for viewers on the NDMA network; elsewhere the toggle
   says the server can't be reached and the rest of the portal works as normal. If the portal

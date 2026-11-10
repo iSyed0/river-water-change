@@ -27,3 +27,6 @@
 __pycache__/
 *.pyc
 desktop.ini
+
+# Water source tiles, about 800 MB: rebuild with scripts/build_tiles.py --group river|flood|lakes
+/portal/tiles/source/

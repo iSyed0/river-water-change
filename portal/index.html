@@ -97,9 +97,6 @@
       <div class="section">
         <div class="eyebrow">Overlays</div>
         <div id="overlays" class="toggles"></div>
-        <div class="type-head">Water type</div>
-        <div id="water-type-toggles" class="toggles"></div>
-        <div class="hint type-hint">Likely types, inferred from location and how often the ground is wet, across 1984–2024 with no dates. Seasonal water mixes floods, high river flow, rain ponding and flooded fields. Types switched on paint over the data layer.</div>
         <div id="ww-legend" class="ww-legend"></div>
         <div id="dots-legend" class="choro-legend dots-legend">
           <div class="dots-key mono">
@@ -115,11 +112,6 @@
           <div class="hint">Building height (estimated)</div>
         </div>
         <div id="bld-hint" class="hint bld-hint" hidden></div>
-        <div id="choro-legend" class="choro-legend" hidden>
-          <div class="ramp"></div>
-          <div class="ramp-labels mono"><span>0%</span><span>1%</span><span>2%</span><span>5%</span><span>10%+</span></div>
-          <div class="hint">Share of district area ever covered by water</div>
-        </div>
       </div>
 
       <div class="source-note">
@@ -159,19 +151,11 @@
 
       <div class="section">
         <div class="row-between">
-          <div class="eyebrow">Water dynamics · 1984 → 2024</div>
+          <div class="eyebrow">Water source · 1984–2024</div>
         </div>
-        <div id="composition" class="composition"></div>
-        <ul id="composition-legend" class="composition-legend"></ul>
-      </div>
-
-      <div class="section">
-        <div class="row-between">
-          <div class="eyebrow">Likely water type · 1984–2024 combined</div>
-        </div>
-        <div id="type-bar" class="composition"></div>
-        <ul id="type-legend" class="composition-legend type-legend"></ul>
-        <div class="hint">Inferred from location and how often the ground is wet, not an observed cause. Seasonal water mixes floods, high river flow, rain ponding and flooded fields. Click a type to switch it on or off on the map.</div>
+        <div id="source-bar" class="composition"></div>
+        <ul id="source-list" class="composition-legend type-legend" role="radiogroup" aria-label="Water source"></ul>
+        <div class="hint"><span id="source-about"></span> Click a source to show only it on Extent, Occurrence, Recurrence and Occurrence Change, and in the figures above. Sources are inferred from location and how often the ground is wet, not an observed cause.</div>
       </div>
 
       <div class="section">

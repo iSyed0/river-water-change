@@ -3,6 +3,7 @@
   'use strict';
 
   const CFG = window.PORTAL_CONFIG;
+  CFG.layers = CFG.layers.filter((L) => !L.off);
   mapboxgl.accessToken = CFG.mapboxToken;
 
   // ------------------------------------------------------------------ helpers
@@ -20,7 +21,12 @@
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   const BASE = location.href.replace(/[?#].*$/, '').replace(/[^/]*$/, '');
-  const tileUrl = (layer, z = '{z}', x = '{x}', y = '{y}') => `${BASE}${CFG.tilesPath}/${layer}/${z}/${x}/${y}.png`;
+  // A water source other than 'all' reads that source's copy of the layer, if it has one
+  const tileUrl = (layer, z = '{z}', x = '{x}', y = '{y}', source = 'all') => {
+    const L = CFG.layers.find((l) => l.id === layer);
+    const dir = source !== 'all' && L?.sourced ? `source/${source}/${layer}` : layer;
+    return `${BASE}${CFG.tilesPath}/${dir}/${z}/${x}/${y}.png`;
+  };
   const EMPTY = { type: 'FeatureCollection', features: [] };
 
   function fmtArea(v) {
@@ -44,8 +50,8 @@
     place: null, // village/town picked from search, pinned on the map
     metric: 'extent_km2',
     highlight: false, // the map shows the metric above, in the selected region, instead of the data layer
-    waterTypes: new Set(), // water types (1-5) painted over whichever layer is showing
-    month: '2010_08', // shown by the Monthly Water layer
+    source: 'all', // water source the sourced layers and the Insights figures show (CFG.sources)
+    month: '2010_08', // shown by the Seasonality (monthly water) layer
     year: '2010', // shown by the Yearly Water layer
   };
 
@@ -57,13 +63,13 @@
     { id: 'provinces', label: 'Province boundaries', icon: '<path d="M4 6l5-2 6 2 5-2v14l-5 2-6-2-5 2z"/><path d="M9 4v14M15 6v14"/>' },
     { id: 'districts', label: 'District boundaries', icon: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 12h16M12 4v16"/>' },
     { id: 'tehsils', label: 'Tehsil boundaries', icon: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9.3h16M4 14.6h16M9.3 4v16M14.6 4v16"/>' },
-    { id: 'choropleth', label: 'District water index', icon: '<path d="M5 20V11M11 20V5M17 20v-6M3 20h18"/>' },
     { id: 'labels', label: 'Place labels', icon: '<path d="M5 7V5h14v2M9 19h6M12 5v14"/>' },
-    { id: 'borders', label: 'Basemap borders', icon: '<path d="M3 12h3M9 12h3M15 12h3M21 12h0"/><path d="M12 3v18"/>' },
   ];
 
   const DATA_LAYERS = CFG.layers.filter((L) => !L.overlay);
-  const PIXEL_LAYERS = CFG.layers.filter((L) => !L.timeline); // their tiles encode values as palette colours
+  const CARD_LAYERS = DATA_LAYERS.filter((L) => L.card !== false);
+  const PIXEL_LAYERS = CFG.layers.filter((L) => !L.timeline && L.card !== false); // their tiles encode values as palette colours
+  const SOURCES = new Map(CFG.sources.map((s) => [s.id, s]));
 
   // Monthly Water: tile channel values are 1 not seen, 2 dry, 3-102 usual water, 103-202 water above usual (2 + or 102 + the % of the cell)
   const MONTHLY = { usual: '#38bdf8', above: '#f97316', unseen: 'rgba(148, 163, 184, 0.55)' };
@@ -85,8 +91,6 @@
       v(3), 'rgba(56, 189, 248, 0.4)', v(102), 'rgba(56, 189, 248, 1)',
       v(103), 'rgba(249, 115, 22, 0.55)', v(202), 'rgba(249, 115, 22, 1)', v(203), clear];
   }
-  const WATER_TYPES = CFG.layers.find((L) => L.id === 'watertype');
-  const WATER_TYPE_OPACITY = 0.85;
 
   const METRICS = [
     { key: 'extent_km2', label: 'Extent', name: 'Maximum water extent', color: '#22d3ee', when: 'Wet at least once at any time in 1984–2024' },
@@ -385,7 +389,7 @@
         continue;
       }
       map.addSource(`gsw-${L.id}`, {
-        type: 'raster', tiles: [tileUrl(L.id)], tileSize: 256, minzoom: 0, maxzoom: L.maxzoom || CFG.tileMaxZoom, bounds,
+        type: 'raster', tiles: [tileUrl(L.id, '{z}', '{x}', '{y}', state.source)], tileSize: 256, minzoom: 0, maxzoom: L.maxzoom || CFG.tileMaxZoom, bounds,
         attribution: 'Water: EC JRC / Google Global Surface Water v1.5',
       });
       if (L.overlay) continue;
@@ -401,12 +405,6 @@
     add({
       id: 'highlight-classes', type: 'raster', source: 'gsw-transitions', layout: { visibility: 'none' },
       paint: { ...highlightPaint, 'raster-color-mix': [...CLASS_MIX, 0], 'raster-color-range': [0, 1], 'raster-color': classColorMap([[1, '#fff']]) },
-    }, before);
-
-    // The water types switched on, over whichever layer is showing
-    add({
-      id: 'water-types', type: 'raster', source: 'gsw-watertype', layout: { visibility: 'none' },
-      paint: { ...highlightPaint, 'raster-opacity': WATER_TYPE_OPACITY, 'raster-color-mix': [...CLASS_MIX, 0], 'raster-color-range': [0, 1], 'raster-color': classColorMap([[1, '#fff']], D.palettes.watertype) },
     }, before);
 
     // Waterways sit above the water layers so channels stay readable over flooded ground
@@ -800,7 +798,10 @@
   function renderTimeChip() {
     const shown = state.highlight && !tour.on ? METRICS.find((x) => x.key === state.metric) : CFG.layers.find((l) => l.id === state.layer);
     const line = (L) => `<div><b>${esc(L.name)}</b> ${esc(L.timeline ? timeWhen(L.timeline) : L.when)}</div>`;
-    $('#time-chip').innerHTML = line(shown) + (state.waterTypes.size ? line(WATER_TYPES) : '');
+    const source = SOURCES.get(state.source);
+    const sourced = state.highlight || !!CFG.layers.find((l) => l.id === state.layer)?.sourced;
+    $('#time-chip').innerHTML = line(shown)
+      + (state.source !== 'all' ? `<div><b>Water source</b> ${esc(sourced ? source.name : `${source.name}: not available for this layer, which shows all water`)}</div>` : '');
   }
 
   // ------------------------------------------------------------------ monthly and yearly water
@@ -1054,21 +1055,6 @@
     cur.setAttribute('x2', xx);
   }
 
-  function applyWaterTypes() {
-    const pal = D.palettes.watertype;
-    const on = state.waterTypes.size > 0 && !tour.on;
-    setVis('water-types', on);
-    if (on && map.getLayer('water-types')) map.setPaintProperty('water-types', 'raster-color', classColorMap([...state.waterTypes].map((t) => [t, rgb(pal[t])]), pal));
-    for (const b of document.querySelectorAll('#water-type-toggles button')) b.setAttribute('aria-checked', String(state.waterTypes.has(Number(b.dataset.type))));
-    for (const b of document.querySelectorAll('#type-legend button')) b.setAttribute('aria-pressed', String(state.waterTypes.has(Number(b.dataset.type))));
-    renderTimeChip();
-  }
-
-  function toggleWaterType(type) {
-    if (!state.waterTypes.delete(type)) state.waterTypes.add(type);
-    applyWaterTypes();
-  }
-
   function applyOpacity() {
     for (const id of [...DATA_LAYERS.map((L) => `gsw-${L.id}`), 'highlight-extent', 'highlight-classes']) {
       if (map.getLayer(id)) map.setPaintProperty(id, 'raster-opacity', state.opacity);
@@ -1099,7 +1085,7 @@
     for (const t of PLACE_TIERS) setVis(`place-labels-${t.id}`, o.labels && !(tour.playing && t.ranks[0] >= 2));
     applyFloodplainVis();
     for (const id of ['erosion-dot', 'erosion-label']) setVis(id, o.erosionDots && !tour.on);
-    applyWaterTypes();
+    renderTimeChip();
     syncDots();
     syncPulses();
     $('#dots-legend').hidden = !o.erosionDots;
@@ -1114,7 +1100,6 @@
       else if (l['source-layer'] === 'building') map.setLayoutProperty(l.id, 'visibility', o.buildings ? 'none' : 'visible');
       else if (l.type === 'symbol') map.setLayoutProperty(l.id, 'visibility', o.labels ? 'visible' : 'none');
     }
-    $('#choro-legend').hidden = !o.choropleth;
   }
 
   function applyTerrain() {
@@ -1342,7 +1327,7 @@
   function buildLayerCards() {
     const list = $('#layer-list');
     list.setAttribute('role', 'radiogroup');
-    for (const L of DATA_LAYERS) {
+    for (const L of CARD_LAYERS) {
       const card = el('div', { class: 'layer-card', role: 'radio', tabindex: '0', 'aria-checked': String(L.id === state.layer), 'data-id': L.id }, `
         <div class="top">
           <span class="thumb" style="background:${thumbBG(L)}"></span>
@@ -1384,16 +1369,6 @@
     $('#tb-next').addEventListener('click', () => stepTime(1));
   }
 
-  function buildWaterTypeToggles() {
-    const typeBox = $('#water-type-toggles');
-    for (const [k, name] of Object.entries(WATER_TYPES.legend.classes)) {
-      const b = el('button', { class: 'toggle', role: 'switch', 'aria-checked': 'false', 'data-type': k },
-        `<span class="lbl"><span class="swatch type-swatch" style="background:${rgb(D.palettes.watertype[k])}"></span>${esc(name)}</span><span class="sw"></span>`);
-      b.addEventListener('click', () => toggleWaterType(Number(k)));
-      typeBox.append(b);
-    }
-  }
-
   function buildOverlays() {
     const box = $('#overlays');
     for (const o of OVERLAYS) {
@@ -1409,8 +1384,6 @@
     $('#ww-legend').innerHTML = Object.values(WATERWAYS).filter((k) => k !== WATERWAYS.drain)
       .map((k) => `<span><i class="line-swatch${k === WATERWAYS.qanat ? ' dotted' : ''}" style="--c:${k.color}"></i>${k.legend}</span>`).join('');
     $('#bld-legend .ramp').style.background = `linear-gradient(90deg, ${BLD_RAMP.dark.map(([, c]) => c).join(', ')})`;
-    $('#choro-legend .ramp').style.background = `linear-gradient(90deg, ${CHORO.map(([, c], i) => `${c} ${(i / (CHORO.length - 1)) * 100}%`)})`;
-    $('#choro-legend .ramp-labels').innerHTML = CHORO.map(([v], i) => `<span>${v}%${i === CHORO.length - 1 ? '+' : ''}</span>`).join('');
   }
 
   // ------------------------------------------------------------------ top bar tools
@@ -1491,11 +1464,25 @@
   map.on('moveend', syncBuildings);
 
   // ------------------------------------------------------------------ insights
+  // A region's figures for the chosen water source: the same fields as stats.json, from water_types.json
+  function sourced(rec, group, key) {
+    if (state.source === 'all' || !rec) return rec;
+    const all = D.waterTypes.sources[state.source];
+    return { ...rec, ...(group ? all[group][key] : all.national) };
+  }
+
   function scopeRecord() {
     const s = state.scope;
-    if (s.level === 'province') return D.provStats.get(s.name);
-    if (s.level === 'district') return D.distStats.get(s.id);
-    return D.stats.national;
+    if (s.level === 'province') return sourced(D.provStats.get(s.name), 'provinces', s.name);
+    if (s.level === 'district') return sourced(D.distStats.get(s.id), 'districts', String(s.id));
+    return sourced(D.stats.national);
+  }
+
+  function setSource(id) {
+    state.source = id;
+    for (const L of CFG.layers) if (L.sourced) map.getSource(`gsw-${L.id}`)?.setTiles([tileUrl(L.id, '{z}', '{x}', '{y}', id)]);
+    renderInsights();
+    applyLayer();
   }
 
   function scopeFeature() {
@@ -1542,7 +1529,7 @@
 
     const net = rec.gained_km2 - rec.lost_km2;
     $('#kpi-hero').innerHTML = `
-      <div class="label"><span class="dot" style="background:var(--accent);box-shadow:0 0 8px var(--accent)"></span>Maximum water extent · 1984–2024</div>
+      <div class="label"><span class="dot" style="background:var(--accent);box-shadow:0 0 8px var(--accent)"></span>Maximum water extent · 1984–2024${state.source !== 'all' ? ` · ${esc(SOURCES.get(state.source).name)}` : ''}</div>
       <div class="value"><span data-count="${rec.extent_km2}">0</span><small>km²</small></div>
       <div class="sub">
         <span class="chip">${fmtPct(pct(rec.extent_km2, rec.area_km2))} of ${fmtArea(rec.area_km2)} km²</span>
@@ -1560,43 +1547,34 @@
       <div class="value"><span data-count="${v}">0</span><small>km²</small></div><div class="kpi-when">${when}</div></div>`).join('');
     for (const n of document.querySelectorAll('#panel-insights [data-count]')) countUp(n, Number(n.dataset.count));
 
-    const pal = D.palettes.transitions;
-    const cls = Object.entries(rec.classes_km2).map(([k, v]) => [Number(k), v]).filter(([, v]) => v > 0);
-    const total = cls.reduce((a, [, v]) => a + v, 0);
-    $('#composition').innerHTML = cls.map(([k, v]) =>
-      `<span style="flex-grow:${v};background:${rgb(pal[k])}" title="${esc(CFG.classes[k])}: ${fmtArea(v)} km²"></span>`).join('');
-    $('#composition-legend').innerHTML = cls.sort((a, b) => b[1] - a[1]).map(([k, v]) => `
-      <li><span class="swatch" style="background:${rgb(pal[k])}"></span><span>${esc(CFG.classes[k])}</span>
-      <span class="v">${fmtArea(v)}</span><span class="p">${fmtPct(pct(v, total))}</span></li>`).join('');
-
-    renderTypes();
+    renderSources();
     renderTimelineChart();
     renderRanking();
   }
 
-  function scopeTypes() {
+  // Water sources in this region, and the switch between them: a click filters the sourced layers and the figures above
+  function renderSources() {
     const s = state.scope;
-    if (s.level === 'province') return D.waterTypes.provinces[s.name];
-    if (s.level === 'district') return D.waterTypes.districts[s.id];
-    return D.waterTypes.national;
-  }
-
-  // Likely water types in this region. A click switches that type on or off on the map.
-  function renderTypes() {
-    const pal = D.palettes.watertype;
-    const names = WATER_TYPES.legend.classes;
-    const km2 = scopeTypes() || [];
-    const total = km2.reduce((a, v) => a + v, 0);
-    $('#type-bar').innerHTML = km2.map((v, i) => `<span style="flex-grow:${v};background:${rgb(pal[i + 1])}" title="${esc(names[i + 1])}: ${fmtArea(v)} km²"></span>`).join('');
-    const ul = $('#type-legend');
+    const all = D.waterTypes.sources;
+    const extentOf = (id) => {
+      if (id === 'all') return (s.level === 'province' ? D.provStats.get(s.name) : s.level === 'district' ? D.distStats.get(s.id) : D.stats.national).extent_km2;
+      const src = all[id];
+      return (s.level === 'province' ? src.provinces[s.name] : s.level === 'district' ? src.districts[String(s.id)] : src.national)?.extent_km2 || 0;
+    };
+    const parts = CFG.sources.filter((x) => x.id !== 'all').map((x) => [x, extentOf(x.id)]);
+    const total = extentOf('all');
+    $('#source-bar').innerHTML = parts.map(([x, v]) => `<span style="flex-grow:${v};background:${x.color}" title="${esc(x.name)}: ${fmtArea(v)} km²"></span>`).join('');
+    const ul = $('#source-list');
     ul.innerHTML = '';
-    km2.forEach((v, i) => {
-      const li = el('li', {}, `<button type="button" data-type="${i + 1}" aria-pressed="${state.waterTypes.has(i + 1)}">
-        <span class="swatch" style="background:${rgb(pal[i + 1])}"></span><span>${esc(names[i + 1])}</span>
-        <span class="v">${fmtArea(v)}</span><span class="p">${fmtPct(pct(v, total))}</span></button>`);
-      li.firstElementChild.addEventListener('click', () => toggleWaterType(i + 1));
+    for (const x of CFG.sources) {
+      const v = extentOf(x.id);
+      const li = el('li', {}, `<button type="button" role="radio" aria-checked="${state.source === x.id}" title="${esc(x.about)}">
+        <span class="swatch" style="background:${x.color}"></span><span>${esc(x.name)}</span>
+        <span class="v">${fmtArea(v)}</span><span class="p">${x.id === 'all' ? '' : fmtPct(pct(v, total))}</span></button>`);
+      li.firstElementChild.addEventListener('click', () => setSource(x.id));
       ul.append(li);
-    });
+    }
+    $('#source-about').textContent = SOURCES.get(state.source).about + '.';
   }
 
   function rankingItems() {
@@ -1604,14 +1582,14 @@
     if (s.level === 'national') {
       return {
         title: 'Provinces & territories',
-        items: D.stats.provinces.map((p) => ({ label: p.name, rec: p, scope: { level: 'province', name: p.name } })),
+        items: D.stats.provinces.map((p) => ({ label: p.name, rec: sourced(p, 'provinces', p.name), scope: { level: 'province', name: p.name } })),
       };
     }
     const prov = s.level === 'province' ? s.name : D.distStats.get(s.id).province;
     return {
       title: `Districts · ${prov}`,
       items: D.stats.districts.filter((d) => d.province === prov).map((d) => ({
-        label: d.name, rec: d, scope: { level: 'district', id: d.id }, cur: s.level === 'district' && s.id === d.id,
+        label: d.name, rec: sourced(d, 'districts', String(d.id)), scope: { level: 'district', id: d.id }, cur: s.level === 'district' && s.id === d.id,
       })),
     };
   }
@@ -3008,7 +2986,6 @@
 
   dataReady.then(() => {
     buildLayerCards();
-    buildWaterTypeToggles();
     bindTimebar();
     buildOpacity();
     buildMetricTabs();
