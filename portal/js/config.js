@@ -30,14 +30,14 @@ window.PORTAL_CONFIG = {
     },
     {
       // Month by month, from the Earth Engine exports (scripts/prepare_timeline.py). Each tile holds three months, one per colour channel.
-      id: 'monthly', short: 'Monthly', name: 'Monthly Water', tag: 'Month by month · 1984–2021', timeline: 'month',
+      id: 'monthly', short: 'Monthly', name: 'Monthly Water', tag: 'Month by month · 1984–2021', timeline: 'month', prototype: true,
       when: 'One month at a time, March 1984 to December 2021. Pick the month below the map.',
       desc: 'Water seen each month, against the usual water for that calendar month in 2000–2021. Water well above usual is the likely sign of a flood, though rain ponding and flooded fields can look the same. Grey is ground the satellite could not see that month, through cloud or a missing image. Before about 2000 most months are largely unseen.',
       legend: { type: 'monthly' },
     },
     {
       // Year by year, from the same exports: permanent, seasonal and above-usual seasonal water (scripts/prepare_timeline.py)
-      id: 'yearly', short: 'Yearly', name: 'Yearly Water', tag: 'Year by year · 1984–2021', timeline: 'year',
+      id: 'yearly', short: 'Yearly', name: 'Yearly Water', tag: 'Year by year · 1984–2021', timeline: 'year', prototype: true,
       when: 'One year at a time, 1984 to 2021. Pick the year below the map.',
       desc: 'Each year\'s water sorted the way JRC sorts it: permanent water, wet in nearly every month it was seen, is rivers, canals and lakes; seasonal water, wet in some months, is floods, rain ponding and irrigation. Seasonal water well above usual in two or more months of the year is the likely flood. Brighter means more of the ground under water. Grey is ground seen in fewer than three months; before about 2000 much of the country is.',
       legend: { type: 'yearly' },

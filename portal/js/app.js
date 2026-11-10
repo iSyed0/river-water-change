@@ -1346,7 +1346,7 @@
       const card = el('div', { class: 'layer-card', role: 'radio', tabindex: '0', 'aria-checked': String(L.id === state.layer), 'data-id': L.id }, `
         <div class="top">
           <span class="thumb" style="background:${thumbBG(L)}"></span>
-          <div><div class="name">${esc(L.name)}</div><div class="tag">${esc(L.tag)}</div></div>
+          <div><div class="name">${esc(L.name)}${L.prototype ? '<span class="proto" title="Built from Earth Engine exports; methods still being checked">Prototype</span>' : ''}</div><div class="tag">${esc(L.tag)}</div></div>
           <span class="radio"></span>
         </div>
         <div class="more"><div><p class="desc">${esc(L.desc)}</p><p class="when"><b>Time covered:</b> ${esc(L.when)}</p><div class="legend">${legendHTML(L)}</div></div></div>`);

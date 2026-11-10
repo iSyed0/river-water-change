@@ -666,6 +666,7 @@ body.touring .time-chip { display: none; }
 .type-legend button[aria-pressed="true"] { background: rgba(255, 255, 255, .1); color: var(--text); }
 .type-legend + .hint { margin-top: 8px; }
 
+.layer-card .proto { margin-left: 7px; padding: 1px 6px; border: 1px solid rgba(253, 224, 71, .45); border-radius: 6px; color: #fde047; font: 600 9.5px var(--font); letter-spacing: .04em; text-transform: uppercase; vertical-align: 1px; }
 .timebar { position: fixed; left: 50%; bottom: 72px; z-index: 5; transform: translateX(-50%); width: min(640px, 48vw); display: flex; align-items: center; gap: 10px; padding: 10px 12px 8px; border-radius: 14px; }
 .timebar[hidden] { display: none; }
 .tb-step { flex: none; width: 30px; height: 30px; border: 1px solid var(--stroke); border-radius: 8px; background: none; color: var(--text); font-size: 18px; line-height: 1; cursor: pointer; }

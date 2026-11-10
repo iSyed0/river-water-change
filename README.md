@@ -22,11 +22,11 @@ Open http://127.0.0.1:8765. The page has to come from a web server; opening
   floodplain, on eroded ground and near the river. The 30 m water values at that spot fold out below; a click on
   dry ground snaps to the nearest water pixel and shows how far away it is.
 - **Insights panel:** national, province and district figures for maximum extent, permanent, seasonal, gained and lost water. It also shows the 1984→2024 transition mix and a sortable ranking.
-- **Monthly Water layer (timeline):** any month from March 1984 to December 2021, picked with the slider under the
+- **Monthly Water layer (timeline, prototype):** any month from March 1984 to December 2021, picked with the slider under the
   map. Water is marked as usual for that calendar month or well above usual (the likely flood signal), and ground the
   satellite could not see is grey. The Insights panel charts the selected region's water month by month against its
   usual level. See *Timeline data* below.
-- **Yearly Water layer:** any year from 1984 to 2021, sorted the way JRC's yearly classification sorts water:
+- **Yearly Water layer (prototype):** any year from 1984 to 2021, sorted the way JRC's yearly classification sorts water:
   permanent water (wet in nearly every month it was seen: rivers, canals, lakes) bright and strong, seasonal water
   (floods, rain ponding, irrigation) pale, and seasonal water well above usual in two or more months of the year in
   orange, the likely flood. The Insights panel shows stacked bars per year for the selected region.
