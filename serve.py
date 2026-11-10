@@ -3,10 +3,12 @@
 Python's stock `http.server` has a tiny connection queue, so bursts of map-tile
 requests get refused. This one uses a large queue and gzips JSON/GeoJSON.
 
-    python serve.py            # http://127.0.0.1:8765
+    python serve.py            # http://127.0.0.1:8765, this PC only
     python serve.py 8080
+    python serve.py --lan      # also shared on the office network: http://<this PC's IP>:8765
 """
 import gzip
+import socket
 import sys
 from functools import partial
 from http.server import SimpleHTTPRequestHandler, ThreadingHTTPServer
@@ -55,8 +57,22 @@ class Server(ThreadingHTTPServer):
     daemon_threads = True
 
 
+def lan_ip():
+    """This PC's address on the office network: the one it would use to reach another machine."""
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+        try:
+            s.connect(("10.255.255.255", 1))  # no packet is sent
+            return s.getsockname()[0]
+        except OSError:
+            return socket.gethostbyname(socket.gethostname())
+
+
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
-    with Server(("127.0.0.1", port), partial(Handler, directory=str(PORTAL))) as httpd:
+    args = [a for a in sys.argv[1:] if a != "--lan"]
+    lan = "--lan" in sys.argv[1:]
+    port = int(args[0]) if args else 8765
+    with Server(("0.0.0.0" if lan else "127.0.0.1", port), partial(Handler, directory=str(PORTAL))) as httpd:
         print(f"Portal running at http://127.0.0.1:{port}  (Ctrl+C to stop)")
+        if lan:
+            print(f"Other PCs on the network: http://{lan_ip()}:{port}")
         httpd.serve_forever()

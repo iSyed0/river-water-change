@@ -13,6 +13,16 @@ python serve.py
 Open http://127.0.0.1:8765. The page has to come from a web server; opening
 `index.html` directly from disk won't load the data.
 
+### Share it on the NDMA network
+
+Double-click `Share Portal on Network.bat` (or run `python serve.py --lan`). Other PCs on the
+network open the address it prints, e.g. http://172.18.1.117:8765, while that window stays open.
+Windows Firewall must allow inbound TCP 8765 once, from an administrator prompt:
+
+```
+netsh advfirewall firewall add rule name="Pakistan Surface Water Observatory (TCP 8765)" dir=in action=allow protocol=TCP localport=8765 profile=domain,private
+```
+
 ## What's in the portal
 
 - **Globe with an opening fly-in**, night, satellite and terrain basemaps, and optional 3D terrain.

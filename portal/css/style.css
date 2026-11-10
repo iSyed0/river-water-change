@@ -656,6 +656,8 @@ body.touring .time-chip { display: none; }
 @media (max-width: 1000px) { .time-chip { display: none; } }
 .layer-card .when { margin: 0 0 10px; color: var(--muted); font-size: 12px; }
 .layer-card .when b { color: var(--text); font-weight: 600; }
+.fx-table tr.fx-split td { padding-top: 1px; padding-bottom: 1px; color: var(--muted); font-size: 11.5px; }
+.fx-table tr.fx-split td:first-child { padding-left: 12px; }
 .kpi-when { margin-top: 2px; color: var(--faint); font-size: 10.5px; }
 .type-legend li { display: block; }
 .type-legend button { display: grid; grid-template-columns: 12px 1fr auto auto; align-items: center; gap: 8px; width: 100%; padding: 3px 4px; border: 0; border-radius: 6px; background: none; color: inherit; font: inherit; text-align: left; cursor: pointer; }

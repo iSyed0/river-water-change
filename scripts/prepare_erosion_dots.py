@@ -3,7 +3,8 @@
 Single pixels of the erosion raster vanish when zoomed out. The analysis sums every figure per grid cell of
 about 2.5 km; this script merges cells into dots for each map zoom, the way the map would cluster them, and
 names the settlements: each building on eroded ground goes to the nearest named place within PLACE_KM. The
-building may not belong to that place, but it is what the ground can be called.
+building may not belong to that place, but it is what the ground can be called. Buildings are also split by the
+ground under them: now wet all year (erosion class 1) or wet for part of the year (class 2).
 
 Every zoom holds all the eroded ground once, so the dots of a zoom add up to the floodplain totals.
 
@@ -53,7 +54,7 @@ def by_chunk(xy):
 def main():
     data = np.load(CACHE / "erosion_cells.npz")
     metrics = [str(m) for m in data["metrics"]]
-    cells = {int(k): {"values": v, "lon": 0.0, "lat": 0.0, "places": Counter()} for k, v in zip(data["keys"], data["values"])}
+    cells = {int(k): {"values": v, "lon": 0.0, "lat": 0.0, "places": Counter(), "bld_perm": 0, "bld_seen": 0} for k, v in zip(data["keys"], data["values"])}
     MI = {m: i for i, m in enumerate(metrics)}
 
     bld = np.load(CACHE / "buildings.npz")["xy"]
@@ -66,7 +67,8 @@ def main():
     no_place = 0
     for cid in sorted({k // 100000 // (CHUNK // CELL) * 100000 + (k % 100000) // (CHUNK // CELL) for k in cells}):
         r0, c0 = cid // 100000 * CHUNK, cid % 100000 * CHUNK
-        ero = np.isin(read_chunk(sources, r0, c0), (1, 2))
+        cls = read_chunk(sources, r0, c0)
+        ero = np.isin(cls, (1, 2))
         cell_of = lambda r, c: (r0 + r) // CELL * 100000 + (c0 + c) // CELL
 
         # Each dot sits at the middle of its changed pixels
@@ -83,6 +85,11 @@ def main():
             idx, r, c = bld_chunks[cid]
             on = ero[r, c]
             if on.any():
+                perm = cls[r[on], c[on]] == 1
+                for k, p in zip(cell_of(r[on], c[on]), perm):
+                    if int(k) in cells:
+                        cells[int(k)]["bld_seen"] += 1
+                        cells[int(k)]["bld_perm"] += int(p)
                 dist, near = pl_tree.query(bld[idx[on]] * [KX, KY])
                 for k, d, p in zip(cell_of(r[on], c[on]), dist, near):
                     if d <= PLACE_KM:
@@ -125,7 +132,7 @@ def main():
         if sums["crop"] >= 0.5:
             sub += f" · {sums['crop']:,.0f} km² cropland"
         props = {"id": fid, "z": z, "name": name, "sub": sub, "districts": dists, "places": top, "n_places": len(named),
-                 "bld_named": sum(named.values()),
+                 "bld_named": sum(named.values()), "bld_perm": sum(cells[k]["bld_perm"] for k in group),
                  "bbox": [round(float(v), 4) for v in (pts[:, 0].min() - 0.02, pts[:, 1].min() - 0.02, pts[:, 0].max() + 0.02, pts[:, 1].max() + 0.02)]}
         props.update({key: round(float(v), 3) for key, v in sums.items()})
         return {"type": "Feature", "geometry": {"type": "Point", "coordinates": [round(float(lon), 4), round(float(lat), 4)]}, "properties": props}
@@ -155,6 +162,9 @@ def main():
     print(f"{path.name}: {len(feats)} dots, {path.stat().st_size / 1e3:.0f} KB")
     print(f"analysis totals: {v[MI['ero_perm']] + v[MI['ero_seas']]:,.1f} km2, {v[MI['bldg_ero']]:,.0f} buildings")
     print(f"named here: {named:,} buildings near a named place, {no_place:,} with none within {PLACE_KM} km")
+    seen = sum(c["bld_seen"] for c in cells.values())
+    perm = sum(c["bld_perm"] for c in cells.values())
+    print(f"buildings on the erosion raster: {seen:,} ({perm:,} on ground now wet all year, {seen - perm:,} wet part of the year)")
 
 
 if __name__ == "__main__":

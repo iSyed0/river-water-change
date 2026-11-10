@@ -2006,15 +2006,17 @@
       <h4>${P.z <= 6 || !P.places.length ? esc(P.name) : `Around ${esc(P.name)}`}</h4>
       <div class="where">${P.districts.map(esc).join(', ')}${P.districts.length ? ` district${P.districts.length > 1 ? 's' : ''} · ` : ''}Indus floodplain</div>
       <div class="fx">
-        <div class="fx-title">What stands on this ground</div>
-        <p class="fx-sentence">Since the 1980s about <b>${area(P.km2)} km²</b> here has turned to water: ${area(P.perm)} km² permanently and ${area(P.km2 - P.perm)} km² for part of the year.</p>
+        <div class="fx-title">Buildings and land now on wet ground</div>
+        <p class="fx-sentence">Since the 1980s about <b>${area(P.km2)} km²</b> of land here has turned to water: ${area(P.perm)} km² is now wet all year and ${area(P.km2 - P.perm)} km² for part of the year. These buildings stand on it today.</p>
         <table class="fx-table fx-dot">
-          ${row('Buildings', n(P.bld))}${row('Cropland, km²', area(P.crop))}${row('Built-up, km²', area(P.built))}
+          ${row('Buildings', n(P.bld))}
+          ${P.bld_perm != null ? `<tr class="fx-split"><td>on ground now wet all year</td><td>${n(P.bld_perm)}</td></tr><tr class="fx-split"><td>on ground flooded part of the year</td><td>${n(Math.max(0, Math.round(P.bld) - P.bld_perm))}</td></tr>` : ''}
+          ${row('Cropland, km²', area(P.crop))}${row('Built-up, km²', area(P.built))}
           ${row('Main roads, km', area(P.major))}${row('Other roads, km', area(P.minor))}${row('Railway, km', area(P.rail))}
           ${row('Schools', n(P.edu))}${row('Health facilities', n(P.health))}${row('Bridges', n(P.bridge))}
         </table>
         ${places}
-        <div class="fx-note">A building is listed under the nearest named place, but may not belong to it. It is exposed, not necessarily destroyed. Roads, schools, health facilities and bridges come from OpenStreetMap and are minimums.</div>
+        <div class="fx-note">Buildings are counted, not lost. Those on ground now wet all year sit in or at the edge of the river channel: likely lost since they were mapped, or at immediate risk. Those on ground flooded part of the year are exposed to floods and high water. A building is listed under the nearest named place, but may not belong to it. Roads, schools, health facilities and bridges come from OpenStreetMap and are minimums.</div>
       </div>`);
     const go = el('button', { class: 'go' }, 'Zoom to this ground →');
     go.addEventListener('click', () => {
