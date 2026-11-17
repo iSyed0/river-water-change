@@ -44,7 +44,7 @@
     basemap: 'night',
     terrain: false,
     spin: false,
-    overlays: { focus: true, rivers: true, erosionDots: true, buildings: true, provinces: true, districts: true, tehsils: true, choropleth: false, labels: true, borders: false },
+    overlays: { focus: true, rivers: true, erosionDots: true, buildings: true, provinces: true, districts: true, tehsils: true, ucs: true, choropleth: false, labels: true, borders: false },
     scope: { level: 'national' }, // | { level: 'province', name } | { level: 'district', id }
     river: null, // name of a waterway picked from search
     place: null, // village/town picked from search, pinned on the map
@@ -63,6 +63,7 @@
     { id: 'provinces', label: 'Province boundaries', icon: '<path d="M4 6l5-2 6 2 5-2v14l-5 2-6-2-5 2z"/><path d="M9 4v14M15 6v14"/>' },
     { id: 'districts', label: 'District boundaries', icon: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 12h16M12 4v16"/>' },
     { id: 'tehsils', label: 'Tehsil boundaries', icon: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9.3h16M4 14.6h16M9.3 4v16M14.6 4v16"/>' },
+    { id: 'ucs', label: 'Union council boundaries', icon: '<rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 8h16M4 12h16M4 16h16M8 4v16M12 4v16M16 4v16"/>' },
     { id: 'labels', label: 'Place labels', icon: '<path d="M5 7V5h14v2M9 19h6M12 5v14"/>' },
   ];
 
@@ -457,6 +458,12 @@
     map.addSource('highlight-mask', { type: 'geojson', data: EMPTY });
     add({ id: 'highlight-dim', type: 'fill', source: 'highlight-mask', layout: { visibility: 'none' }, paint: { 'fill-color': '#020611', 'fill-opacity': 0.78 } }, before);
 
+    map.addSource('ucs', { type: 'geojson', data: D.ucs || EMPTY });
+    add({
+      id: 'ucs-line', type: 'line', source: 'ucs', minzoom: UC_ZOOM,
+      paint: { 'line-color': '#ddd6fe', 'line-opacity': ['interpolate', ['linear'], ['zoom'], UC_ZOOM, 0.3, 12, 0.65], 'line-width': ['interpolate', ['linear'], ['zoom'], UC_ZOOM, 0.6, 13, 1.4], 'line-dasharray': [1, 1.5] },
+    }, before);
+
     map.addSource('tehsils', { type: 'geojson', data: D.units || EMPTY });
     add({
       id: 'tehsils-line', type: 'line', source: 'tehsils', minzoom: TEHSIL_ZOOM,
@@ -618,6 +625,13 @@
         paint: { ...placePaint, 'text-opacity': t.ranks[0] >= 2 ? 0.9 : 1 },
       });
     }
+
+    map.addSource('uc-labels', { type: 'geojson', data: D.ucs ? labelPoints(D.ucs) : EMPTY });
+    add({
+      id: 'uc-labels', type: 'symbol', source: 'uc-labels', minzoom: UC_LABEL_ZOOM,
+      layout: { 'text-field': ['case', ['in', 'UC', ['get', 'name']], ['get', 'name'], ['concat', ['get', 'name'], ' UC']], 'text-font': font, 'text-size': 10.5, 'text-max-width': 8 },
+      paint: { ...textPaint, 'text-color': '#ddd6fe', 'text-opacity': 0.85 },
+    });
 
     // Above the village names, which would otherwise leave no room for a tehsil name
     map.addSource('tehsil-labels', { type: 'geojson', data: D.units ? labelPoints(D.units) : EMPTY });
@@ -1075,6 +1089,9 @@
     setVis('tehsils-line', o.tehsils && !tour.on);
     setVis('tehsil-labels', o.tehsils && o.labels && !tour.on);
     ensureTehsils();
+    setVis('ucs-line', o.ucs && !tour.on);
+    setVis('uc-labels', o.ucs && o.labels && !tour.on);
+    ensureUcLayer();
     setVis('disputed-labels', o.labels);
     for (const id of ['ww-minor', 'ww-glow', 'ww-major', 'ww-qanat']) setVis(id, o.rivers);
     setVis('ww-labels', o.rivers && o.labels);
@@ -1142,6 +1159,24 @@
       if (!D.units) { tehsilReq = null; return; }
       map.getSource('tehsils')?.setData(D.units);
       map.getSource('tehsil-labels')?.setData(labelPoints(D.units));
+    });
+  }
+
+  // Union councils (prepare_admin_units.py): about 2 MB, fetched once zoomed in with the overlay on, or on a click
+  const UC_ZOOM = 9, UC_LABEL_ZOOM = 10.5;
+  let ucReq = null;
+  function ensureUcs() {
+    ucReq ||= getJSON('data/union_councils.geojson')
+      .then((fc) => { D.ucs = fc; })
+      .catch(() => { D.ucs = null; });  // optional: the portal works without it
+    return ucReq;
+  }
+  function ensureUcLayer() {
+    if (!state.overlays.ucs || map.getZoom() < UC_ZOOM - 0.5) return;
+    ensureUcs().then(() => {
+      if (!D.ucs || map.getSource('ucs')._data?.features?.length) return;
+      map.getSource('ucs')?.setData(D.ucs);
+      map.getSource('uc-labels')?.setData(labelPoints(D.ucs));
     });
   }
 
@@ -1274,6 +1309,7 @@
   map.on('zoomend', () => {
     ensureMinor();
     ensureTehsils();
+    ensureUcLayer();
     maybePlaces();
     applyResampling();
   });
@@ -1526,6 +1562,18 @@
       if (!last) node.addEventListener('click', () => setScope(p.scope));
       crumbs.append(node);
     });
+
+    // On the map too, so the way back is there even with the Insights panel closed
+    const chip = $('#scope-chip');
+    chip.hidden = s.level === 'national';
+    if (!chip.hidden) {
+      const district = s.level === 'district';
+      chip.innerHTML = `<span>Focused on <b>${esc(rec.name)}</b> ${district ? 'district' : 'province'}</span>
+        ${district ? `<button type="button" data-up title="Show all of ${esc(rec.province)}">All ${esc(rec.province)}</button>` : ''}
+        <button type="button" data-home>← Back to all Pakistan</button>`;
+      chip.querySelector('[data-home]').addEventListener('click', () => setScope({ level: 'national' }));
+      chip.querySelector('[data-up]')?.addEventListener('click', () => setScope({ level: 'province', name: rec.province }));
+    }
 
     const net = rec.gained_km2 - rec.lost_km2;
     $('#kpi-hero').innerHTML = `
@@ -1900,13 +1948,8 @@
   // Union councils or tehsils, from prepare_admin_units.py. Loaded on the first click.
   let unitsReq = null;
   function ensureUnits() {
-    unitsReq ||= Promise.all([getJSON('data/admin_units.geojson'), getJSON('data/unit_effects.json'), getJSON('data/land_change.json').catch(() => null)])
-      .then(([units, fx, land]) => {
-        D.units = units;
-        D.unitFx = fx;
-        D.unitFxI = Object.fromEntries(fx.metrics.map((m, i) => [m, i]));
-        D.unitLand = land;
-      })
+    unitsReq ||= getJSON('data/admin_units.geojson')
+      .then((units) => { D.units = units; })
       .catch((err) => { unitsReq = null; console.error(err); });
     return unitsReq;
   }
@@ -1925,59 +1968,358 @@
     return (g.type === 'Polygon' ? [g.coordinates] : g.coordinates).some((poly) => inRing(x, y, poly[0]) && !poly.slice(1).some((h) => inRing(x, y, h)));
   }
 
-  function unitAt(x, y) {
-    for (const f of D.units?.features || []) {
+  function unitAt(x, y, fc = D.units) {
+    for (const f of fc?.features || []) {
       const [w, s, e, n] = f.properties.bbox;
       if (x >= w && x <= e && y >= s && y <= n && inFeature(f, x, y)) return f;
     }
     return null;
   }
 
-  // The effect of river change on one unit, in words first and then as a table
-  function unitEffect(unit) {
-    const P = unit.properties;
-    const level = D.units.level.toLowerCase();
-    const fx = D.unitFx.units[P.id];
-    if (!fx) return `<div class="fx-none">This ${level} has no ground in the Indus floodplain. River effects are calculated for the Indus floodplain only.</div>`;
-    const v = (k) => fx[D.unitFxI[k]];
-    const area = (a) => (a === 0 ? '0' : a < 0.05 ? '<0.1' : a < 100 ? a.toFixed(1) : fmtKm(a));
-    const n = (a) => fmtKm(a);
-    const eroded = v('ero_perm') + v('ero_seas');
-    const regained = v('acc_perm') + v('acc_seas');
-    const roadsEro = v('major_ero') + v('minor_ero');
-    const onGround = [`${area(v('crop_ero'))} km² of cropland`, `${n(v('bldg_ero'))} building${v('bldg_ero') === 1 ? '' : 's'}`];
-    if (v('place_ero')) onGround.push(`${n(v('place_ero'))} village${v('place_ero') === 1 ? '' : 's'} or town${v('place_ero') === 1 ? '' : 's'}`);
-    if (roadsEro >= 0.05) onGround.push(`${area(roadsEro)} km of road`);
-    if (v('rail_ero') >= 0.05) onGround.push(`${area(v('rail_ero'))} km of railway`);
-    const sentence = eroded < 0.05
-      ? `No sustained river erosion is recorded in the floodplain part of this ${level} since the 1980s.`
-      : `Since the 1980s about <b>${area(eroded)} km²</b> of land here has turned to water: ${area(v('ero_perm'))} km² permanently and ${area(v('ero_seas'))} km² for part of the year. Another ${area(regained)} km² has dried out. The affected ground holds <b>${onGround.join(', ')}</b>.`;
+  // ------------------------------------------------------------------ district report
+  // From prepare_district_reports.py: per district, the villages near the Indus, the land each lost, their risk of losing
+  // more, land cut year by year and the places standing in the river's path. Loaded on the first district click.
+  let reportsReq = null;
+  function ensureReports() {
+    reportsReq ||= getJSON('data/district_reports.json')
+      .then((r) => { D.reports = r; })
+      .catch((err) => { reportsReq = null; console.error(err); });
+    return reportsReq;
+  }
 
-    const row = (label, fp, ero, near) => `<tr><td>${label}</td><td>${fp}</td><td>${ero}</td><td>${near}</td></tr>`;
-    const table = `<table class="fx-table"><thead><tr><th>In floodplain</th><th>Total</th><th>Eroded or newly wet</th><th>Within 1 km of river</th></tr></thead><tbody>
-      ${row(`Buildings${D.unitFx.buildings === 'osm' ? ' (OSM only)' : ''}`, n(v('bldg_fp')), n(v('bldg_ero')), n(v('bldg_near')))}
-      ${row('Villages, towns', n(v('place_fp')), n(v('place_ero')), n(v('place_near')))}
-      ${row('Built-up, km²', area(v('built_fp')), area(v('built_ero')), area(v('built_near')))}
-      ${row('Cropland, km²', area(v('crop_fp')), area(v('crop_ero')), area(v('crop_near')))}
-      ${row('Main roads, km', area(v('major_fp')), area(v('major_ero')), area(v('major_near')))}
-      ${row('Other roads, km', area(v('minor_fp')), area(v('minor_ero')), area(v('minor_near')))}
-      ${row('Railway, km', area(v('rail_fp')), area(v('rail_ero')), area(v('rail_near')))}
-      ${row('Schools', n(v('edu_fp')), n(v('edu_ero')), n(v('edu_near')))}
-      ${row('Health facilities', n(v('health_fp')), n(v('health_ero')), n(v('health_near')))}
-      ${row('Bridges', n(v('bridge_fp')), n(v('bridge_ero')), n(v('bridge_near')))}
-    </tbody></table>`;
+  const RISK_COLORS = ['#c42b31', '#ef5350', '#f39a52', '#f7c99c', '#3a4559'];
+  const RISK_INK = ['#fff', '#fff', '#1d1006', '#1d1006', '#cbd5e1'];
+  const acres = (v) => Math.round(v).toLocaleString('en-US');
+  const shareOf = (a, b) => (b > 0 ? (100 * a) / b : 0);
+  const pctText = (p) => (p >= 1 ? `${Math.round(p)}%` : p > 0 ? '<1%' : '–');
+  const village = ([name, tehsil, kind, area, lost, lostPerm, recent, bld, bldPerm, risk, lng, lat, uc = '']) =>
+    ({ name, tehsil, kind, area, lost, lostPerm, recent, bld, bldPerm, risk, lng, lat, uc });
+  const placeRow = ([name, kind, where, cls, lng, lat, uc = '']) => ({ name, kind, where, cls, lng, lat, uc });
+  const hasUcs = () => !!D.reports?.meta.union_councils;
+  const recentYears = () => D.reports.meta.recent.join('–');
+  const riskBadge = (k) => `<span class="rp-risk" style="--c:${RISK_COLORS[k]};--ink:${RISK_INK[k]}">${esc(D.reports.meta.risk[k])}</span>`;
+  const barCell = (p, kind) => `<td class="rp-bc"><span class="rp-bar ${kind}"><i style="width:${Math.min(100, p).toFixed(1)}%"></i></span><em>${pctText(p)}</em></td>`;
 
-    const L = D.unitLand;
-    const lf = L?.units?.[P.id];
-    let recent = '';
-    if (lf) {
-      const w = (k) => lf[L.meta.metrics.indexOf(k)];
-      const period = CFG.layers.find((l) => l.id === 'landloss').period;
-      recent = `<div class="fx-recent"><b>${esc(period)}</b>, 20 m satellite detail: ${area(w('loss'))} km² lost and ${area(w('deposit'))} km² deposited. ${n(w('bldg'))} buildings stand on the lost land and ${n(w('bldg_near'))} within ${L.meta.near_m} m of it.</div>`;
+  const between = (R) => (R.stretch[0] && R.stretch[1] && R.stretch[0] !== R.stretch[1] ? `${esc(R.stretch[0])} → ${esc(R.stretch[1])}` : '');
+  const stretchText = (R) => `about ${fmtKm(R.km[1] - R.km[0])} km of the Indus${between(R) ? `, ${between(R)}` : ''}`;
+
+  // Moves the map so a large popup sits clear of the header, the side panels and the status bar
+  function keepPopupInView(p) {
+    const box = p?.getElement()?.getBoundingClientRect();
+    if (!box) return;
+    const mobile = isMobile();  // panels there are sheets over the map, not columns beside it
+    const shown = (sel) => {
+      if (mobile) return null;
+      const n = $(sel);
+      const r = n?.getBoundingClientRect();
+      return r && r.width && r.right > 60 && r.left < innerWidth - 60 && !n.classList.contains('collapsed') ? r : null;
+    };
+    const lp = shown('#panel-layers'), rp = shown('#panel-insights');
+    const L = (lp ? lp.right : 0) + 12, R = (rp ? rp.left : innerWidth) - 12;
+    const bottomBar = $(mobile ? '.mobile-dock' : '.statusbar')?.getBoundingClientRect();
+    const chip = $('#scope-chip');
+    const T = Math.max($('.topbar')?.getBoundingClientRect().bottom || 0, chip.hidden ? 0 : chip.getBoundingClientRect().bottom) + 10, B = (bottomBar?.height ? bottomBar.top : innerHeight) - 10;
+    const fit = (lo, hi, a, b) => (b - a > hi - lo || a < lo ? lo - a : b > hi ? hi - b : 0);
+    const dx = fit(L, R, box.left, box.right), dy = fit(T, B, box.top, box.bottom);
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) map.panBy([-dx, -dy], { duration: reducedMotion ? 0 : 450 });
+  }
+
+  function reportTiles(R, full) {
+    const T = R.totals;
+    const osm = D.reports.meta.buildings === 'osm' ? ' (OSM only)' : '';
+    const t = (v, label, hot) => `<div class="rp-tile${hot ? ' hot' : ''}"><b>${v}</b><span>${label}</span></div>`;
+    return `<div class="rp-tiles${full ? ' full' : ''}">
+      ${t(acres(T.acres), 'acres of land now under the river', true)}
+      ${t(fmtKm(T.villages_lost), 'villages lost land')}
+      ${t(fmtKm(T.villages_high), 'villages at high or very high risk', true)}
+      ${full ? t(acres(T.recent_acres), `acres cut by the river in ${recentYears()}`, true) : ''}
+      ${t(fmtKm(T.buildings), `buildings on land the river took${osm}`)}
+      ${t(fmtKm(T.in_path), 'settlements, schools and health centres in its path')}
+    </div>`;
+  }
+
+  function topVillages(R, n = 15) {
+    const rows = R.villages.slice(0, n).map(village);
+    if (!rows.length) return '<div class="fx-none">No village near the river here has lost land since the 1980s.</div>';
+    return `<table class="rp-tbl rp-top"><thead><tr><th>#</th><th>Village</th><th class="rp-teh">Tehsil</th><th>Area<br>(acres)</th>
+        <th>Land lost to the river<br>since the 1980s (% of village)</th><th>Cut by the river<br>${recentYears()} (% of village)</th></tr></thead>
+      <tbody>${rows.map((v, i) => `<tr data-i="${i}" title="Show ${esc(v.name)} on the map"><td><span class="rp-num">${i + 1}</span></td><td class="rp-name">${esc(v.name)}</td>
+        <td class="rp-teh rp-dim">${esc(v.tehsil)}</td><td>${acres(v.area)}</td>${barCell(shareOf(v.lost, v.area), 'lost')}${barCell(shareOf(v.recent, v.area), 'recent')}</tr>`).join('')}</tbody></table>`;
+  }
+
+  // Numbered pins for the most affected villages, as on the printed district map
+  function reportPins(R, n = 15) {
+    map.getSource('dot-pins')?.setData({ type: 'FeatureCollection', features: R.villages.slice(0, n).map(village).map((v, i) => (
+      { type: 'Feature', geometry: { type: 'Point', coordinates: [v.lng, v.lat] }, properties: { label: `${i + 1} ${v.name}` } })) });
+  }
+
+  function flyToPlace(name, lng, lat) {
+    $('#dr').hidden = true;
+    popup?.remove();
+    if (state.layer !== 'erosion') setLayer('erosion');
+    map.getSource('dot-pins')?.setData({ type: 'FeatureCollection', features: [{ type: 'Feature', geometry: { type: 'Point', coordinates: [lng, lat] }, properties: { label: name } }] });
+    map.flyTo({ center: [lng, lat], zoom: 12.6, duration: reducedMotion ? 0 : 1800, essential: true });
+  }
+
+  // The district card in the map popup: the headline figures and the 15 most affected villages
+  function districtCard(R, distId) {
+    const node = el('div', { class: 'fx rp' }, `
+      <div class="fx-title">Indus river change and land-loss risk to villages · ${esc(D.reports.meta.period)}</div>
+      <div class="rp-meta">${esc(R.province)} · ${stretchText(R)}</div>
+      ${reportTiles(R, false)}
+      <div class="rp-h">The 15 most affected villages</div>
+      ${topVillages(R)}
+      <div class="fx-note">Villages are named places; each is given the ground within ${D.reports.meta.place_km} km that is closer to it than to any other named place (no official mouza boundaries are available). Land lost: ground that turned to river or flood water since the 1980s and stayed wet. Ranked by risk of losing more land, then by land lost. Click a village to see it on the map.</div>`);
+    const actions = el('div', { class: 'rp-actions' });
+    const full = el('button', { class: 'go' }, 'Full district report →');
+    full.addEventListener('click', () => openReport(distId));
+    const csv = el('button', { class: 'rp-ghost' }, 'Download data (CSV)');
+    csv.addEventListener('click', () => downloadReport(distId, 'villages'));
+    actions.append(full, csv);
+    node.append(actions);
+    node.querySelectorAll('.rp-top tbody tr').forEach((tr) => tr.addEventListener('click', () => {
+      const v = village(R.villages[+tr.dataset.i]);
+      flyToPlace(`${+tr.dataset.i + 1} ${v.name}`, v.lng, v.lat);
+    }));
+    return node;
+  }
+
+  // ---- downloads
+  function saveCSV(file, lines) {
+    const q = (v) => (typeof v === 'number' ? String(v) : `"${String(v ?? '').replace(/"/g, '""')}"`);
+    const text = lines.map((r) => r.map(q).join(',')).join('\r\n');
+    const url = URL.createObjectURL(new Blob(['﻿', text], { type: 'text/csv' }));
+    el('a', { href: url, download: file }).click();
+    setTimeout(() => URL.revokeObjectURL(url), 2000);
+  }
+
+  const REPORT_TABLES = {
+    summary: {
+      title: 'Summary',
+      head: () => ['Measure', 'Value'],
+      rows: (R) => {
+        const T = R.totals;
+        return [
+          ['Province', R.province], ['Indus river km (from the source)', `${R.km[0]}-${R.km[1]}`], ['Stretch', R.stretch.filter(Boolean).join(' to ')],
+          ['Indus floodplain in the district (acres)', T.fp_acres],
+          ['Land now under the river since the 1980s (acres)', T.acres], ['of which under water all year (acres)', T.acres_perm],
+          ['Land the river gave back (acres)', T.acres_back], ['Cropland on land the river took (acres)', T.crop_acres],
+          [`Land cut by the river ${recentYears()} (acres, estimate)`, T.recent_acres],
+          ['Villages within 3 km of the floodplain', T.villages_near], ['Villages that lost land', T.villages_lost],
+          ['Villages at high or very high risk', T.villages_high], ['Buildings on land the river took', T.buildings],
+          ['Buildings within 1 km of the river', T.buildings_near], ['Settlements, schools and health centres in the river\'s path', T.in_path],
+        ];
+      },
+    },
+    years: {
+      title: 'Land cut by the river each year',
+      head: () => ['Year', 'Acres cut (estimate)', 'Confirmed by the year after'],
+      rows: (R) => D.reports.meta.years.map((y, i) => [y, R.years[i], y >= D.reports.meta.provisional_from ? 'no' : 'yes']),
+    },
+    risk: {
+      title: 'Villages by risk of losing more land',
+      head: () => ['Risk', 'Villages', 'Meaning'],
+      rows: (R) => D.reports.meta.risk.map((k, i) => [k, R.risk[i], D.reports.meta.risk_text[i]]),
+    },
+    tehsils: {
+      title: 'By tehsil',
+      head: () => ['Tehsil', 'Villages near the river', 'Villages that lost land', 'Acres now under the river', 'Villages at high or very high risk', 'Buildings on land the river took'],
+      rows: (R) => R.tehsils,
+    },
+    villages: {
+      title: 'Villages that lost land',
+      head: () => ['Rank', 'Village', 'Union council', 'Tehsil', 'Kind of place', 'Village ground (acres)', 'Land lost since the 1980s (acres)', 'Lost (% of village)',
+        'of which now under water all year (acres)', `Cut by the river ${recentYears()} (acres)`, 'Cut recently (% of village)',
+        'Buildings on land lost', 'of which on ground now under water all year', 'Risk', 'Longitude', 'Latitude'],
+      rows: (R) => R.villages.map(village).map((v, i) => [i + 1, v.name, v.uc, v.tehsil, v.kind, v.area, v.lost, +shareOf(v.lost, v.area).toFixed(1), v.lostPerm,
+        v.recent, +shareOf(v.recent, v.area).toFixed(1), v.bld, v.bldPerm, D.reports.meta.risk[v.risk], v.lng, v.lat]),
+    },
+    path: {
+      title: 'Places in the river\'s path',
+      head: () => ['Name', 'Kind', 'Union council', 'Tehsil or nearest village', 'Where it stands', 'Longitude', 'Latitude'],
+      rows: (R) => R.path.map(placeRow).map((p) => [p.name, p.kind, p.uc, p.where, D.reports.meta.where[p.cls], p.lng, p.lat]),
+    },
+  };
+
+  function downloadReport(distId, which) {
+    const R = D.reports?.districts[distId];
+    if (!R) return;
+    const base = `${R.name.toLowerCase().replace(/[^a-z0-9]+/g, '_')}_district`;
+    const note = [`${R.name} district, ${R.province}. Pakistan Surface Water Observatory (NDMA), built ${D.reports.meta.built} from JRC Global Surface Water ${D.reports.meta.period}.`];
+    if (which !== 'all') {
+      const T = REPORT_TABLES[which];
+      saveCSV(`${base}_${which}.csv`, [T.head(), ...T.rows(R)]);
+      return;
     }
-    return `<div class="fx-title">Effect on settlements and infrastructure</div>
-      <p class="fx-sentence">${sentence}</p>${recent}${table}
-      <div class="fx-note">Counts the part of this ${level} inside the Indus floodplain (${area(v('fp'))} km²). Buildings on newly wet ground are exposed, not necessarily destroyed. Roads, schools, health facilities and bridges come from OpenStreetMap and are minimums.</div>`;
+    const lines = [note, []];
+    for (const T of Object.values(REPORT_TABLES)) lines.push([T.title.toUpperCase()], T.head(), ...T.rows(R), []);
+    saveCSV(`${base}_report.csv`, lines);
+  }
+
+  // ---- the full report window
+  function reportStep(max, n = 4) {
+    const raw = max / n;
+    const p = 10 ** Math.floor(Math.log10(raw || 1));
+    return [1, 2, 2.5, 5, 10].map((m) => m * p).find((s) => s >= raw) || p * 10;
+  }
+
+  function yearChart(R) {
+    const M = D.reports.meta;
+    const W = 680, H = 230, L = 50, Rt = 8, T = 12, B = 26;
+    const vals = R.years;
+    const step = reportStep(Math.max(...vals, 1));
+    const top = Math.ceil(Math.max(...vals, 1) / step) * step;
+    const y = (v) => T + (H - T - B) * (1 - v / top);
+    const bw = (W - L - Rt) / vals.length;
+    const w = Math.max(3, bw * 0.62);
+    let grid = '';
+    for (let v = 0; v <= top + 1e-9; v += step) {
+      grid += `<line x1="${L}" x2="${W - Rt}" y1="${y(v)}" y2="${y(v)}" class="${v ? 'g' : 'base'}"/><text x="${L - 7}" y="${y(v) + 3.5}" text-anchor="end">${fmtKm(v)}</text>`;
+    }
+    const bars = vals.map((v, i) => {
+      const x = L + i * bw + (bw - w) / 2;
+      const y0 = y(0), y1 = y(v), r = Math.min(4, w / 2, y0 - y1);
+      const d = v > 0 ? `M${x},${y0}V${y1 + r}Q${x},${y1} ${x + r},${y1}H${x + w - r}Q${x + w},${y1} ${x + w},${y1 + r}V${y0}Z` : '';
+      const prov = M.years[i] >= M.provisional_from;
+      return `<path d="${d}" class="${prov ? 'prov' : 'bar'}"/>`;
+    }).join('');
+    const labels = M.years.map((yr, i) => (yr % 5 === 0 || i === M.years.length - 1 ? `<text x="${L + i * bw + bw / 2}" y="${H - 8}" text-anchor="middle">${yr}</text>` : '')).join('');
+    const hits = vals.map((v, i) => `<rect x="${L + i * bw}" y="${T}" width="${bw}" height="${H - T - B}" data-i="${i}" class="hit"/>`).join('');
+    return `<svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Acres the river cut each year, ${M.years[0]} to ${M.years.at(-1)}">
+      <text x="12" y="${T + (H - T - B) / 2}" transform="rotate(-90 12 ${T + (H - T - B) / 2})" text-anchor="middle" class="axis">acres</text>
+      ${grid}${bars}${labels}${hits}</svg>`;
+  }
+
+  function riskBars(R) {
+    const M = D.reports.meta;
+    const max = Math.max(...R.risk, 1);
+    return `<div class="rp-riskbars">${M.risk.map((k, i) => `<div class="rp-rb" title="${esc(M.risk_text[i])}"><span>${esc(k)}</span>
+      <div class="rp-rb-track"><i style="width:${((100 * R.risk[i]) / max).toFixed(1)}%;background:${RISK_COLORS[i]}"></i></div><b>${fmtKm(R.risk[i])}</b></div>`).join('')}</div>`;
+  }
+
+  function inShort(R) {
+    const M = D.reports.meta;
+    const T = R.totals;
+    const worst = R.villages.slice(0, 3).map((r) => esc(r[0]));
+    const years = M.years.map((y, i) => [y, R.years[i]]).filter(([y]) => y < M.provisional_from).sort((a, b) => b[1] - a[1]).slice(0, 3);
+    const items = [
+      `The Indus runs along ${esc(R.name)} for about ${fmtKm(R.km[1] - R.km[0])} km${between(R) ? ` (${between(R)})` : ''}.`,
+      `About <b>${acres(T.acres)} acres</b> of land here have turned to river since the 1980s: ${acres(T.acres_perm)} acres are now under water all year and the rest is flooded part of the year. The river also gave back about ${acres(T.acres_back)} acres.`,
+      `<b>${fmtKm(T.villages_lost)}</b> of the ${fmtKm(T.villages_near)} villages near the river lost land. <b>${fmtKm(T.villages_high)}</b> are at high or very high risk of losing more.`,
+      worst.length ? `Worst hit villages: ${worst.join(', ')}.` : '',
+      `In ${recentYears()} alone the river cut into about <b>${acres(T.recent_acres)} acres</b> here, some of it land it had taken or given back before.`,
+      `${fmtKm(T.buildings)} buildings stand on land the river took, and ${fmtKm(T.in_path)} settlements, schools and health centres stand in its path.`,
+      years.length ? `Worst years for land cut: ${years.map(([y, v]) => `${y} (about ${acres(v)} acres)`).join(', ')}.` : '',
+    ].filter(Boolean);
+    return `<ul class="rp-short">${items.map((t) => `<li>${t}</li>`).join('')}</ul>`;
+  }
+
+  function villageTable(R, all) {
+    const rows = R.villages.map(village).map((v, i) => ({ ...v, i })).filter((v) => all || v.risk <= 2);
+    const uc = hasUcs();
+    return `<table class="rp-tbl rp-full${uc ? ' has-uc' : ''}"><thead><tr><th>#</th><th>Village</th>${uc ? '<th>Union council</th>' : ''}<th>Tehsil</th><th>Area<br>(acres)</th><th>Lost since the 1980s<br>(acres · % of village)</th>
+        <th>Now under water<br>all year (acres)</th><th>Cut ${recentYears()}<br>(acres · % of village)</th><th>Buildings on<br>land lost</th><th>Risk</th></tr></thead>
+      <tbody>${rows.map((v) => `<tr data-i="${v.i}"><td>${v.i + 1}</td><td class="rp-name">${esc(v.name)}</td>${uc ? `<td class="rp-dim">${esc(v.uc)}</td>` : ''}<td class="rp-dim">${esc(v.tehsil)}</td><td>${acres(v.area)}</td>
+        <td>${acres(v.lost)} · ${pctText(shareOf(v.lost, v.area))}</td><td>${acres(v.lostPerm)}</td><td>${acres(v.recent)} · ${pctText(shareOf(v.recent, v.area))}</td>
+        <td>${fmtKm(v.bld)}</td><td>${riskBadge(v.risk)}</td></tr>`).join('')}</tbody></table>`;
+  }
+
+  function pathTable(R) {
+    const M = D.reports.meta;
+    if (!R.path.length) return '<p class="rp-p">No mapped settlement, school or health facility stands on land the river took here.</p>';
+    const uc = hasUcs();
+    return `<table class="rp-tbl rp-full rp-path"><thead><tr><th>Name</th><th>Kind</th>${uc ? '<th>Union council</th>' : ''}<th>Tehsil or nearest village</th><th>Where it stands</th></tr></thead>
+      <tbody>${R.path.map(placeRow).map((p, i) => `<tr data-i="${i}" class="w${p.cls}"><td class="rp-name">${esc(p.name)}</td><td>${esc(p.kind)}</td>${uc ? `<td class="rp-dim">${esc(p.uc)}</td>` : ''}<td class="rp-dim">${esc(p.where)}</td>
+        <td>${esc(M.where[p.cls])}</td></tr>`).join('')}</tbody></table>`;
+  }
+
+  function section(id, title, body, csv = true) {
+    return `<section class="rp-sec" id="dr-${id}"><div class="rp-sec-head"><h3>${title}</h3>${csv ? `<button class="fp-btn" data-csv="${csv === true ? id : csv}">CSV</button>` : ''}</div>${body}</section>`;
+  }
+
+  let reportId = null;
+  function openReport(distId) {
+    const R = D.reports?.districts[distId];
+    if (!R) return;
+    reportId = distId;
+    const M = D.reports.meta;
+    const T = R.totals;
+    const nAll = R.villages.length;
+    const nShown = R.villages.filter((r) => r[9] <= 2).length;
+    $('#dr-title').textContent = `${R.name} District`;
+    $('#dr-sub').innerHTML = `Indus river change and land-loss risk to villages, ${esc(M.period)} · ${esc(R.province)} · ${stretchText(R)}`;
+    $('#dr-body').innerHTML = `
+      ${reportTiles(R, true)}
+      ${section('short', 'In short', inShort(R), 'summary')}
+      <div class="rp-two">
+        ${section('years', 'Land cut by the river each year', `<p class="rp-p">Acres of fields, bushes and homes in the ${esc(R.name)} floodplain that the river cut into each year, counted only when the land stayed river the year after. Lighter bar: ${M.provisional_from}, not yet confirmed by the year after.</p>
+          <div class="rp-chart">${yearChart(R)}<div class="rp-tip" hidden></div></div>
+          <p class="rp-small">Estimated from the JRC monthly water record in cells of about 275 m, so it shows which years were worst; the acres are approximate. The record ends in December ${M.provisional_from}.</p>`)}
+        ${section('risk', 'Villages by risk of losing more land', `${riskBars(R)}
+          <p class="rp-small">Risk combines the share of a village's ground already lost since the 1980s and the share the river cut in ${recentYears()}. Very high: ${esc(M.risk_text[0])}. A guide from the satellite record, not a forecast. Hover a bar for its rule.</p>`)}
+      </div>
+      ${section('tehsils', 'By tehsil', R.tehsils.length ? `<table class="rp-tbl rp-full"><thead><tr><th>Tehsil</th><th>Villages<br>near river</th><th>Lost land</th><th>Acres now<br>under river</th><th>High / very<br>high risk</th><th>Buildings on<br>land lost</th></tr></thead>
+          <tbody>${R.tehsils.map((t) => `<tr><td class="rp-name">${esc(t[0])}</td><td>${fmtKm(t[1])}</td><td>${fmtKm(t[2])}</td><td>${acres(t[3])}</td><td>${fmtKm(t[4])}</td><td>${fmtKm(t[5])}</td></tr>`).join('')}</tbody></table>` : '<p class="rp-p">No tehsil figures.</p>')}
+      ${section('villages', 'Villages at risk', `<p class="rp-p">${nShown ? `The ${fmtKm(nShown)} villages of ${esc(R.name)} near the river with moderate, high or very high risk, most at risk first.` : 'No village here has moderate or higher risk.'}
+          Under the river: ground of the village that turned to water since the 1980s. Cut: ground the river cut into in ${recentYears()}. Numbers 1–15 match the map. Click a row to see the village on the map.</p>
+          <div class="rp-villages">${villageTable(R, false)}</div>
+          ${nAll > nShown ? `<button class="fp-btn rp-more">Show all ${fmtKm(nAll)} villages that lost land</button>` : ''}`)}
+      ${section('path', 'Places in the river\'s path', `<p class="rp-p">${fmtKm(T.in_path)} settlements, schools and health facilities in ${esc(R.name)} stand on land the river took since the 1980s, or in its wet belt. Settlements are mapped named places; schools and health facilities come from OpenStreetMap, which misses many. Click a row to see it on the map.</p>${pathTable(R)}`)}
+      ${section('missing', 'Not in this report yet', `<p class="rp-p"><b>Projected erosion by 2035</b> and <b>embankments to check first</b> need a bank-erosion forecast and an embankment map, which this portal does not have yet. They can be added once those data are available.</p>`, false)}
+      ${section('method', 'How these figures are made', `<p class="rp-small">Water: JRC Global Surface Water ${esc(M.period)}, Landsat, 30 m. Land counts as taken by the river only when it turned to water between the 1980s and 2024 and stayed wet (a lasting change, so one-off floods do not count); "now under water all year" and "flooded part of the year" follow the JRC classes. Villages are named places from GeoNames and OpenStreetMap; with no official mouza boundaries, each village's ground is the land within ${M.place_km} km closer to it than to any other named place, so village areas and shares are approximate. ${M.union_councils ? 'Union councils: census (PCO) and Alhasan Systems boundaries of about 2017, not an official NDMA set; they cover Punjab, Sindh, Khyber Pakhtunkhwa and Balochistan. ' : ''}Buildings: ${M.buildings === 'osm' ? 'OpenStreetMap footprints only, a minimum' : 'NDMA building server (Google Open Buildings and OpenStreetMap)'}; a building on land the river took is exposed, not necessarily destroyed. Year-by-year cuts: JRC Monthly Water History ${M.years[0] - 1}–${M.provisional_from}, cells of about 275 m. Built ${esc(M.built)}.</p>`, false)}`;
+
+    const body = $('#dr-body');
+    body.scrollTop = 0;
+    const bindRows = () => body.querySelectorAll('.rp-villages tbody tr').forEach((tr) => tr.addEventListener('click', () => {
+      const i = +tr.dataset.i;
+      const v = village(R.villages[i]);
+      flyToPlace(`${i + 1} ${v.name}`, v.lng, v.lat);
+    }));
+    bindRows();
+    body.querySelector('.rp-more')?.addEventListener('click', (e) => {
+      body.querySelector('.rp-villages').innerHTML = villageTable(R, true);
+      e.target.remove();
+      bindRows();
+    });
+    body.querySelectorAll('.rp-path tbody tr').forEach((tr) => tr.addEventListener('click', () => {
+      const p = placeRow(R.path[+tr.dataset.i]);
+      flyToPlace(p.name, p.lng, p.lat);
+    }));
+    body.querySelectorAll('[data-csv]').forEach((b) => b.addEventListener('click', () => downloadReport(distId, b.dataset.csv)));
+
+    // Hover a year for its figure
+    const svg = body.querySelector('.rp-chart svg');
+    const tipEl = body.querySelector('.rp-tip');
+    svg.addEventListener('mousemove', (e) => {
+      const r = e.target.closest('.hit');
+      svg.querySelectorAll('path.on').forEach((p) => p.classList.remove('on'));
+      if (!r) { tipEl.hidden = true; return; }
+      const i = +r.dataset.i;
+      svg.querySelectorAll('path')[i]?.classList.add('on');
+      const yr = M.years[i];
+      tipEl.innerHTML = `<b>${yr}</b>: about ${acres(R.years[i])} acres${yr >= M.provisional_from ? '<br>not yet confirmed by the year after' : ''}`;
+      const box = svg.getBoundingClientRect();
+      const rb = r.getBoundingClientRect();
+      tipEl.style.left = `${rb.left - box.left + rb.width / 2}px`;
+      tipEl.hidden = false;
+    });
+    svg.addEventListener('mouseleave', () => { tipEl.hidden = true; svg.querySelectorAll('path.on').forEach((p) => p.classList.remove('on')); });
+
+    $('#dr').hidden = false;
+    $('#dr-close').focus({ preventScroll: true });
+  }
+
+  function buildReport() {
+    const close = () => { $('#dr').hidden = true; };
+    $('#dr-close').addEventListener('click', close);
+    $('#dr').addEventListener('click', (e) => { if (e.target.id === 'dr') close(); });
+    document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#dr').hidden) close(); });
+    $('#dr-csv').addEventListener('click', () => reportId !== null && downloadReport(reportId, 'all'));
+    $('#dr-print').addEventListener('click', () => {
+      document.body.classList.add('dr-print');
+      window.print();
+    });
+    window.addEventListener('afterprint', () => document.body.classList.remove('dr-print'));
   }
 
   let popup = null;
@@ -2053,18 +2395,18 @@
     const bld = buildingAt(e.point);
     const bh = bld && Number(bld.properties.height);
     const node = el('div', {}, `
-      <h4>${dist ? esc(dist.name) : disputed ? esc(disputed.properties.name) : 'Outside Pakistan'}</h4>
+      <h4>${dist ? `${esc(dist.name)} district` : disputed ? esc(disputed.properties.name) : 'Outside Pakistan'}</h4>
       <div class="where">${dist ? `${esc(dist.province)} · ` : disputed ? 'Disputed territory · ' : ''}${lat.toFixed(4)}° N  ${lng.toFixed(4)}° E</div>
       ${ww ? `<div class="ww">${waterwayLine(ww)}</div>` : ''}
       ${bld ? `<div class="bld"><span class="bld-swatch"></span>Building${bh >= 1 ? ` · ~${bh.toFixed(1)} m tall` : ''}
         <span class="kind">${esc(BLD_SOURCES[bld.properties.source] || bld.properties.source || '')}</span></div>` : ''}
       <div class="loading"><span class="pulse"></span>Reading this area…</div>`);
     popup?.remove();
-    popup = new mapboxgl.Popup({ className: 'probe', maxWidth: '390px', offset: 12, focusAfterOpen: false, anchor: popupAnchor(e.lngLat) })
+    popup = new mapboxgl.Popup({ className: `probe${dist ? ' wide' : ''}`, maxWidth: dist ? '600px' : '390px', offset: 12, focusAfterOpen: false, anchor: popupAnchor(e.lngLat) })
       .setLngLat(e.lngLat).setDOMContent(node).addTo(map);
-    popup.on('close', () => map.getSource('unit-outline')?.setData(EMPTY));
+    popup.on('close', () => { map.getSource('unit-outline')?.setData(EMPTY); map.getSource('dot-pins')?.setData(EMPTY); });
 
-    const [{ values, snapped }] = await Promise.all([sampleAll(lng, lat), dist ? ensurePlaces().catch(() => null) : null, dist ? ensureUnits() : null]);
+    const [{ values, snapped }] = await Promise.all([sampleAll(lng, lat), dist ? ensurePlaces().catch(() => null) : null, dist ? ensureUnits() : null, dist ? ensureReports() : null, dist ? ensureUcs() : null]);
     if (!node.isConnected) return;
     node.querySelector('.loading').remove();
     const near = dist && nearestPlace(lng, lat);
@@ -2073,17 +2415,21 @@
       node.querySelector('.where').insertAdjacentHTML('afterend',
         `<div class="near">Near <b>${esc(near.place.name)}</b> <span>${esc(PLACE_KINDS[near.place.kind].toLowerCase())} · ${d}</span></div>`);
     }
-    // Name the union council or tehsil first, then what the river did to it
+    // The district's river report; the tehsil clicked in is named on the line below the title
     const unit = dist && D.units ? unitAt(lng, lat) : null;
-    if (unit) {
-      const P = unit.properties;
-      const parents = [P.tehsil && `${P.tehsil} tehsil`, `${P.district} district`, P.province].filter(Boolean);
-      node.querySelector('h4').textContent = `${P.name} ${D.units.level.toLowerCase()}`;
-      node.querySelector('.where').textContent = `${parents.join(' · ')} · ${lat.toFixed(4)}° N  ${lng.toFixed(4)}° E`;
-      map.getSource('unit-outline')?.setData({ type: 'FeatureCollection', features: [unit] });
-      node.insertAdjacentHTML('beforeend', `<div class="fx">${unitEffect(unit)}</div>`);
-    } else if (dist && D.units) {
-      node.insertAdjacentHTML('beforeend', `<div class="fx"><div class="fx-none">No ${D.units.level.toLowerCase()} boundary covers this point.</div></div>`);
+    const uc = dist && D.ucs ? unitAt(lng, lat, D.ucs) : null;
+    if (unit || uc) {
+      const where = [uc && `${uc.properties.name} union council`, unit && `${unit.properties.name} ${D.units.level.toLowerCase()}`, dist.province].filter(Boolean);
+      node.querySelector('.where').textContent = `${where.join(' · ')} · ${lat.toFixed(4)}° N  ${lng.toFixed(4)}° E`;
+    }
+    const report = dist ? D.reports?.districts[dist.id] : null;
+    if (dist) map.getSource('unit-outline')?.setData({ type: 'FeatureCollection', features: [D.distFeat.get(dist.id)].filter(Boolean) });
+    if (report) {
+      node.append(districtCard(report, dist.id));
+      reportPins(report);
+      requestAnimationFrame(() => keepPopupInView(popup));
+    } else if (dist && D.reports) {
+      node.insertAdjacentHTML('beforeend', `<div class="fx"><div class="fx-none">The Indus floodplain does not reach ${esc(dist.name)}, so it has no river-change report. Reports cover the ${Object.keys(D.reports.districts).length} districts along the Indus.</div></div>`);
     }
 
     const pixel = el('details', { class: 'fx-pixel' }, `<summary>Water values at this spot</summary>`);
@@ -2098,7 +2444,7 @@
     } else {
       pixel.insertAdjacentHTML('beforeend', `<div class="loading">${dist || disputed ? 'No surface water recorded here, 1984–2024.' : 'Data covers Pakistan only.'}</div>`);
     }
-    if (!unit) pixel.open = true; // nothing else to show first
+    if (!report) pixel.open = true; // nothing else to show first
     node.append(pixel);
     if (dist) {
       const go = el('button', { class: 'go' }, `${esc(dist.name)} district insights →`);
@@ -2980,6 +3326,7 @@
   buildTools();
   buildOverlays();
   buildTour();
+  buildReport();
 
   if (location.protocol === 'file:') {
     $('#intro-status').textContent = 'Open this portal through a web server: see README.md';

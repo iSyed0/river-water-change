@@ -13,6 +13,9 @@
 # Full-detail boundaries, about 600 MB: over GitHub's file limit. prepare_boundaries.py and prepare_admin_units.py read them.
 /boundries/
 
+# Union council shapefile from the user (25 MB); prepare_admin_units.py turns it into portal/data/union_councils.geojson.
+/gcop_Union_Council/
+
 # Earth Engine monthly exports (about 5 GB) and the monthly tiles made from them (about 480 MB, 62,000 files):
 # too large for GitHub. prepare_timeline.py rebuilds the tiles from the exports. The yearly tiles (47 MB) are kept.
 /ndma water monthly/

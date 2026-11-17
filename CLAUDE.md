@@ -31,7 +31,9 @@ answers short. **Commit or push only when asked.** Commit messages end with a
 | `Run Portal.bat`, `Share Portal on Network.bat` | Double-click launchers (this PC only / whole network) | Yes |
 | `extent/ occurrence/ recurrence/ seasonality/ transitions/ change/` | JRC GSW v1.5 source granules, 60–80 E, 20–40 N | No |
 | `erosion/` | Derived change raster written by `analyse_floodplain.py` | Yes |
+| `rajanpur/` | The user's sample district report (page images) the district popup and report window copy | Yes |
 | `watertype/` | Derived water-type raster written by `prepare_water_types.py` | No |
+| `gcop_Union_Council/` | Union council shapefile from the user (PCO + Alhasan, ~2017), read by `prepare_admin_units.py` | No |
 | `boundries/` (sic) | Provinces, districts, tehsils from the user (~600 MB). Name is misspelt on purpose: scripts use it | No |
 | `boundaries_src/` | Official national boundary, waterways | Yes |
 | `osm_src/` | GeoNames PK.txt, Geofabrik OSM shapefiles | No |
@@ -76,6 +78,10 @@ Python 3 with rasterio, numpy, pillow, shapely, pyproj, scipy, pyogrio is needed
   Transitions card (data kept for the Insights tabs), one-year Seasonality, Basemap borders, District
   water index, Water dynamics, water-type overlay switches. Yearly Water is `off: true`, to return later.
 - **Monthly data is reliable only from about 2000**; earlier months are sparsely observed.
+- **District click = district report** (`prepare_district_reports.py` -> `data/district_reports.json`), laid out like
+  the user's printed Rajanpur report (`rajanpur/*.jpg`). It replaced the old tehsil effects table in the popup.
+  Villages are named places with nearest-place ground (no mouza boundaries); risk rules are `RISK_RULES`. Projected
+  erosion by 2035 and embankments are not available and are stated as missing, not estimated.
 - **Building counts** in popups come from NDMA's tile server (`http://172.18.1.142:8081`, Google Open
   Buildings + OSM), cached in `build/floodplain/buildings.npz`. Popups say *exposed, not destroyed*
   and split buildings into ground now wet all year vs flooded part of the year.
@@ -101,9 +107,9 @@ Python 3 with rasterio, numpy, pillow, shapely, pyproj, scipy, pyogrio is needed
 ## Open items
 
 - Hosting: VM move, or pack tiles for Vercel (see above).
-- Union council boundaries: only public set is Alhasan Systems on HDX (2017, unofficial); the user has
-  to download it in a browser into `osm_src/union_councils/`, then re-run `prepare_admin_units.py`,
-  `analyse_floodplain.py`, `prepare_land_change.py`. Tehsils stand in for now.
+- Union councils are in (from the user's `gcop_Union_Council/`, PCO + Alhasan, ~2017, 4 provinces only) as their own
+  overlay + popup name + village column. `admin_units.geojson` stays tehsils on purpose: unit_effects, the reports'
+  tehsil tables and the tehsil overlay use it. An official NDMA union council file would be better if one exists.
 - Boundary credit: the source of `boundries/` isn't stated yet, so the page credit is neutral.
 - NDMA flood maps (2010, 2022, 2025) and rainfall records may come from the user into `flood_events/`.
 - Re-enable Yearly Water later; cropland on wet ground isn't split by permanent/seasonal yet (needs a

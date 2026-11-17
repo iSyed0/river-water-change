@@ -177,6 +177,7 @@
 
   <!-- Status bar -->
   <div id="time-chip" class="time-chip glass" role="status"></div>
+  <div id="scope-chip" class="scope-chip glass" role="status" hidden></div>
   <div id="timebar" class="timebar glass" hidden>
     <button type="button" class="tb-step" id="tb-prev" aria-label="Previous month">‹</button>
     <div class="tb-body">
@@ -290,6 +291,24 @@
         </div>
       </div>
       <div class="fp-all-wrap" id="fp-all-wrap"></div>
+    </div>
+  </div>
+
+  <div id="dr" class="fp-all dr" hidden role="dialog" aria-modal="true" aria-labelledby="dr-title">
+    <div class="fp-all-box dr-box glass">
+      <div class="fp-head fp-head-row dr-head">
+        <div>
+          <div class="eyebrow">District report · Indus river change</div>
+          <div class="fp-title dr-title" id="dr-title">—</div>
+          <div class="fp-sub" id="dr-sub"></div>
+        </div>
+        <div class="fp-all-tools">
+          <button class="fp-btn" id="dr-csv">Download all data (CSV)</button>
+          <button class="fp-btn" id="dr-print">Print or save as PDF</button>
+          <button class="icon-btn" id="dr-close" aria-label="Close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18"/></svg></button>
+        </div>
+      </div>
+      <div class="dr-wrap" id="dr-body"></div>
     </div>
   </div>
 

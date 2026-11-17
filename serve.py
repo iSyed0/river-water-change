@@ -56,6 +56,12 @@ class Server(ThreadingHTTPServer):
     request_queue_size = 512
     daemon_threads = True
 
+    def handle_error(self, request, client_address):
+        # The map cancels tile requests it no longer needs while panning; that is normal, not an error
+        if isinstance(sys.exc_info()[1], (ConnectionAbortedError, ConnectionResetError, BrokenPipeError)):
+            return
+        super().handle_error(request, client_address)
+
 
 def lan_ip():
     """This PC's address on the office network: the one it would use to reach another machine."""

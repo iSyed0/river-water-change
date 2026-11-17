@@ -29,10 +29,14 @@ netsh advfirewall firewall add rule name="Pakistan Surface Water Observatory (TC
 - **Water layers:** maximum extent, seasonality (month by month), occurrence, recurrence and occurrence change. The
   one-year Months of Water and the Yearly Water layers are switched off with `off: true` in `js/config.js`; Water
   Transitions has no card (`card: false`) but its tiles feed the Insights tabs.
-- **Click any area** for its tehsil or union council and the effect of river change there: land taken and
-  regained, plus buildings, villages, cropland, roads, railway, schools, health facilities and bridges in the
-  floodplain, on eroded ground and near the river. The 30 m water values at that spot fold out below; a click on
-  dry ground snaps to the nearest water pixel and shows how far away it is.
+- **Click a district** for its river-change report, laid out like NDMA's printed district reports (Rajanpur
+  sample in `rajanpur/`): headline figures, the 15 most affected villages with bars for the share of each village
+  lost since the 1980s and cut in 2016–2020, numbered pins on the map, and *Download data (CSV)*. *Full district
+  report* opens a window with In short, land cut each year (chart), villages by risk, by tehsil, every village at
+  risk, and places in the river's path, each with a CSV button, plus *Print or save as PDF*. Click a village or
+  place to fly to it on the erosion layer. Districts away from the Indus say they have no report. The 30 m water
+  values at the spot fold out below; a click on dry ground snaps to the nearest water pixel. See *District
+  reports* below.
 - **Insights panel:** national, province and district figures for maximum extent, permanent, seasonal, gained and lost water. It also has the water source switch and a sortable ranking.
 - **Seasonality layer (monthly water):** any month from March 1984 to December 2021, picked with the slider under the
   map. Water is marked as usual for that calendar month or well above usual (the likely flood signal), and ground the
@@ -55,7 +59,7 @@ netsh advfirewall firewall add rule name="Pakistan Surface Water Observatory (TC
 - **Map highlight:** selecting a province or district, or a tab in the Insights panel (Extent, Permanent, Seasonal,
   Gained, Lost), shows that tab's water on the map and dims everything outside the region. Picking a data layer
   or *Back to data layer* returns to the layer.
-- **Overlays:** focus mask outside Pakistan, province, district and tehsil boundaries, and labels. Tehsil lines load from zoom 7.5 and their names show from zoom 9.
+- **Overlays:** focus mask outside Pakistan, province, district, tehsil and union council boundaries, and labels. Tehsil lines load from zoom 7.5 and their names show from zoom 9; union council lines from zoom 9 and their names from zoom 10.5. The popup names the union council and tehsil clicked in.
 - **Rivers and canals** from `WaterWays_Pakistan.geojson`: rivers, canals, nalas/streams, qanats
   and the unnamed network, each styled differently and labelled along their course.
   Hovering or clicking shows the waterway's name.
@@ -119,8 +123,9 @@ scripts/
   analyse_floodplain.py erosion, land cover and infrastructure per reach and district
   floodplain_common.py  readers for the JRC mosaic, Copernicus DEM and WorldCover
   prepare_erosion_dots.py eroded and newly wet ground with what stands on it -> portal/data/erosion_dots.geojson
+  prepare_district_reports.py villages, risk, yearly cuts, places in the river's path -> portal/data/district_reports.json
   prepare_land_change.py Earth Engine exports -> portal/tiles/landloss, portal/data/land_change.json
-  prepare_admin_units.py union councils or tehsils -> portal/data/admin_units.geojson
+  prepare_admin_units.py tehsils -> portal/data/admin_units.geojson; union councils -> portal/data/union_councils.geojson
 serve.py                local server (large connection queue, gzip for GeoJSON)
 extent/ occurrence/ ... JRC source granules (60–80 E, 20–40 N)
 erosion/                derived change raster, written by analyse_floodplain.py
@@ -151,7 +156,7 @@ python scripts/compute_stats.py        # ~15 s
 python scripts/prepare_rivers.py       # ~10 s
 python scripts/prepare_indus.py        # seconds, after prepare_rivers.py
 python scripts/prepare_places.py       # ~15 s, after prepare_boundaries.py
-python scripts/prepare_admin_units.py  # ~1 min, after prepare_boundaries.py
+python scripts/prepare_admin_units.py  # ~1 min, after prepare_boundaries.py; reads gcop_Union_Council/ if present
 python scripts/prepare_timeline.py     # ~30 min, after prepare_boundaries.py; needs ndma water monthly/
 python scripts/prepare_water_types.py  # after prepare_rivers.py, analyse_floodplain.py; then build_tiles.py --layers watertype
 python scripts/build_tiles.py --group river --layers extent occurrence recurrence change transitions   # ~5 min each;
@@ -161,6 +166,7 @@ python scripts/prepare_floodplain.py   # ~3 min first time, after prepare_indus.
 python scripts/analyse_floodplain.py   # ~5 min first time, after prepare_floodplain.py, prepare_places.py
 python scripts/build_tiles.py --layers erosion   # after analyse_floodplain.py
 python scripts/prepare_erosion_dots.py # ~1 min, after analyse_floodplain.py
+python scripts/prepare_district_reports.py  # ~30 s, after analyse_floodplain.py, prepare_places.py, prepare_timeline.py
 python scripts/prepare_land_change.py  # ~1 min, after analyse_floodplain.py
 ```
 
@@ -248,6 +254,28 @@ is checked against field surveys, so treat the figures as a screening tool.
 - **The cross-section chart is not a channel survey.** The Copernicus surface model includes
   trees and buildings and cannot see the river bed, so it shows the shape of the land, not depth.
 
+## District reports
+
+`prepare_district_reports.py` builds the district popup and report window from data already in the project.
+They follow the layout of the printed Rajanpur report, with these differences:
+
+- **Villages are named places** (GeoNames and OpenStreetMap), not mouzas: there are no official village
+  boundaries here. Each village's ground is the land within 3 km that is closer to it than to any other named
+  place, so village areas and shares are approximate. Villages *near the river* are those within 3 km of the
+  floodplain.
+- **Land lost** is the erosion raster (sustained change since the 1980s, 30 m), each pixel given to the nearest
+  village. District totals come from `floodplain.json`, so they match the rest of the portal.
+- **Land cut each year** comes from the monthly record (`build/timeline/share_*.tif`, ~275 m cells, 2000–2021):
+  river share that is new in a year and still river the year after, inside the floodplain. It shows which years
+  were worst; the acres are approximate. 2021 can't yet be confirmed by the year after and is drawn lighter.
+- **Risk** uses the share of a village's ground lost since the 1980s and the share cut in 2016–2020. Very high:
+  25% or more lost and 10% or more cut recently. High: 15% lost and 5% cut, or 40% lost, or 30% cut. Moderate: 5%
+  either way. Low: any loss of an acre or more. The rules are `RISK_RULES` in the script. A guide, not a forecast.
+- **Places in the river's path** are named places, and OSM schools and health facilities, whose point is on (or
+  one pixel from) land the river took, or on ground wet in both periods.
+- **Not included yet:** projected erosion by 2035 and embankments to check first. They need a bank-erosion
+  forecast and an embankment map.
+
 ## Water types
 
 Satellites record that a pixel was wet, not why, so the JRC layers mix rivers, canals, lakes, floods, rain ponding and
@@ -300,12 +328,16 @@ The record ends in December 2021, so the 2022 and 2025 floods are not in it.
 
 ## Union councils
 
-The popup names a union council when `osm_src/union_councils/` holds a shapefile, and a tehsil otherwise
-(`boundries/Pakistan_Tehsils.geojson`). The only complete public union council set is from
-[Alhasan Systems on HDX](https://data.humdata.org/dataset/pakistan-union-council-boundaries-along-with-other-admin-boundaries-dataset).
-It dates from 2017, was compiled from public sources, and isn't official; its publisher says it may not suit
-legal, engineering or survey use. An official NDMA or Bureau of Statistics file is better if one is available.
-After adding a file, re-run `prepare_admin_units.py`, `analyse_floodplain.py` and `prepare_land_change.py`.
+Union council boundaries come from `gcop_Union_Council/Union_Council.shp` (5,884 polygons, supplied by the user;
+`osm_src/union_councils/` is also searched). The file mixes census (PCO) and
+[Alhasan Systems](https://data.humdata.org/dataset/pakistan-union-council-boundaries-along-with-other-admin-boundaries-dataset)
+boundaries of about 2017, covers Punjab, Sindh, Khyber Pakhtunkhwa and Balochistan (not Gilgit-Baltistan, AJK or
+Islamabad), and isn't an official NDMA set. `prepare_admin_units.py` writes them to `union_councils.geojson`
+(5,460 units after merging pieces with the same name in one tehsil; ~2 MB gzipped, fetched only when zoomed in or on
+a click). Each gets the district and tehsil of our boundary files that it mostly falls in. They are drawn as their own
+overlay, named in the map popup, and given to each village and place in the district reports. The floodplain figures
+and the reports' tehsil tables stay per tehsil. After replacing the file, re-run `prepare_admin_units.py` and
+`prepare_district_reports.py`.
 
 ## The Sukkur 20 m layer
 
