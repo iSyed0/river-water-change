@@ -1,6 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
-  "outputDirectory": "portal",
+  "outputDirectory": "frontend",
   "headers": [
     {
       "source": "/tiles/(.*)",

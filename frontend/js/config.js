@@ -1,0 +1,151 @@
+/* Portal configuration. Colours live in data/palettes.json (written by backend/pipeline/build_tiles.py). */
+window.PORTAL_CONFIG = {
+  // Public Mapbox token. Restrict it to your portal's domain in the Mapbox account settings.
+  mapboxToken: 'pk.eyJ1IjoiemVlc2hhbjEwIiwiYSI6ImNtMXN0YXVhbTBhYnIybHNhOHRheHRwOWoifQ.vgmSlaE3lAnZPy59Ni7SkQ',
+
+  tilesPath: 'tiles',
+  tileMaxZoom: 12,
+
+  // Building footprints (Google Open Buildings + OSM) from NDMA's TileServer GL: one vector tileset per
+  // district, each with a `buildings` layer. Tilesets are listed from the server's data.json at runtime.
+  // Tiles below z12 run to ~450 KB, so buildings are drawn from minzoom.
+  buildings: { server: 'http://172.18.1.142:8081', layer: 'buildings', minzoom: 12, maxzoom: 17 },
+
+  // NDMA DSDI (Disaster Spatial Data Infrastructure) GeoServer layers, relayed by backend/serve.py under dsdi/ because the
+  // browser may not call DSDI directly. Layers are sorted into the first group whose pattern matches the title.
+  dsdi: {
+    relay: 'dsdi',
+    // Switching one of these on hides the portal's own lines of the same level, so only one set of lines shows
+    replaces: {
+      'gcop:provincial_boundary': 'provinces',
+      'gcop:district_boundary_updated': 'districts', 'gcop:district_boundary': 'districts',
+      'gcop:tehsil_boundary': 'tehsils',
+      'gcop:uc_boundary': 'ucs', 'gcop:Union_Council': 'ucs',
+    },
+    // Shown first in the list, under their own names
+    featured: [
+      { name: 'gcop:district_boundary_updated', label: 'District boundaries (DSDI, updated)' },
+      { name: 'gcop:tehsil_boundary', label: 'Tehsil boundaries (DSDI)' },
+      { name: 'gcop:uc_boundary', label: 'Union council boundaries (DSDI)' },
+      { name: 'gcop:settlements_', label: 'Settlements (DSDI)' },
+    ],
+    groups: [
+      { id: 'outlook', label: 'River flood outlooks 2026', match: /outlook/i },
+      { id: 'forecast', label: 'Weather forecasts & climate', match: /neoc|airtemp|prec\b|humidity|snow|inform cc|drought|heatwave|wildfire/i },
+      { id: 'flood', label: 'Flood extents & inundation', match: /flood|inundat|f ?ex\b|\bfe ?20|extent|extant|breach|torr?ent|chenab \d|\d+ ?mm|filter|proj\b|projec|\bht\b|jamshoro|cropland/i },
+      { id: 'coast', label: 'Cyclones & coast', match: /cyclone|baseline|asna|biparjoy|gulab|nilofar|vayu|tauk|yemin|coast|shore|transect|ocean|eez|offshore|forecast line|uncertain/i },
+      { id: 'hazard', label: 'Earthquakes, GLOFs & hazards', match: /fault|seismic|epicent|shake|pga|tectonic|earthquake|hazard|geolog|simex|glof|glacier|\barc\b|active zones|kirthar|incident|alert|vulnerab|exposure/i },
+      { id: 'water', label: 'Rivers, dams & canals', match: /river|canal|dam|barrage|reserv|headwork|stream|distribut|shed|nullah|protection|hydel|pond|retention|lake/i },
+      { id: 'boundary', label: 'Boundaries', match: /boundar|countr|disputed|union council|\buc\b|balochistan|^gb$|^pdma$|zones/i },
+      { id: 'infra', label: 'Infrastructure & services', match: /airport|bridge|road|highway|motorway|railway|school|health|hospital|medical|police|rescue|fire|seaport|industr|settle|populat|bts|wearhouse|warehouse|ngo|livestock|urban|sites|construction|structure|fish|forest/i },
+      { id: 'other', label: 'Other', match: /./ },
+    ],
+  },
+
+  // Opening globe position, then the view the intro flies to.
+  start: { center: [38, 22], zoom: 1.3, pitch: 0, bearing: 0 },
+  home: { center: [69.6, 30.1], zoom: 4.85, pitch: 32, bearing: -6 },
+
+  basemaps: [
+    { id: 'night', label: 'Night', style: 'mapbox://styles/mapbox/dark-v11', mask: 0.6 },
+    { id: 'satellite', label: 'Satellite', style: 'mapbox://styles/mapbox/satellite-streets-v12', mask: 0.5 },
+    { id: 'terrain', label: 'Terrain', style: 'mapbox://styles/mapbox/outdoors-v12', mask: 0.45 },
+  ],
+
+  // A layer with off: true is left out of the portal; remove the flag to bring it back
+  layers: [
+    {
+      id: 'extent', short: 'Extent', name: 'Maximum Water Extent', tag: 'Ever observed · 1984–2024', sourced: true,
+      when: 'Wet at least once at any time in 1984–2024. It does not say when.',
+      desc: 'Every location where surface water was detected at least once in four decades of Landsat imagery: the outer envelope of rivers, lakes, reservoirs and floods. It is a satellite water record, not a flood map: Landsat passes every 8–16 days and cannot see through cloud or crops, so it misses much of a short flood. Mapped flood extents (2010, 2022) are in the NDMA DSDI layers.',
+      legend: { type: 'single', label: 'Water detected at least once' },
+    },
+    {
+      // Month by month, from the Earth Engine exports (backend/pipeline/prepare_timeline.py). Each tile holds three months, one per colour channel.
+      id: 'monthly', short: 'Seasonality', name: 'Seasonality', tag: 'Month by month · 1984–2021', timeline: 'month',
+      when: 'One month at a time, March 1984 to December 2021. Pick the month below the map.',
+      desc: 'Which months water is present: the water seen each month, against the usual water for that calendar month in 2000–2021. Water well above usual is the likely sign of a flood, though rain ponding and flooded fields can look the same. Grey is ground the satellite could not see that month, through cloud or a missing image. Before about 2000 most months are largely unseen.',
+      legend: { type: 'monthly' },
+    },
+    {
+      // Year by year, from the same exports: permanent, seasonal and above-usual seasonal water (backend/pipeline/prepare_timeline.py)
+      id: 'yearly', short: 'Yearly', name: 'Yearly Water', tag: 'Year by year · 1984–2021', timeline: 'year', prototype: true, off: true,
+      when: 'One year at a time, 1984 to 2021. Pick the year below the map.',
+      desc: 'Each year\'s water sorted the way JRC sorts it: permanent water, wet in nearly every month it was seen, is rivers, canals and lakes; seasonal water, wet in some months, is floods, rain ponding and irrigation. Seasonal water well above usual in two or more months of the year is the likely flood. Brighter means more of the ground under water. Grey is ground seen in fewer than three months; before about 2000 much of the country is.',
+      legend: { type: 'yearly' },
+    },
+    {
+      // Not a map layer: its tiles name the water type in the pixel popup. The water sources (below) group these types
+      id: 'watertype', short: 'Type', name: 'Water types', overlay: true,
+      when: 'All of 1984–2024 combined, sorted by location and how often it is wet. It has no dates.',
+      legend: { type: 'classes', classes: {
+        1: 'River or canal', 2: 'Lake or reservoir', 3: 'Seasonal water near a river', 4: 'Seasonal water away from rivers', 5: 'Coast and tidal water',
+      } },
+    },
+    {
+      id: 'occurrence', short: 'Occurrence', name: 'Water Occurrence', tag: 'Frequency · % of observations', sourced: true,
+      when: 'All of 1984–2024 combined into one figure.',
+      desc: 'How often water was present across all valid observations. Low values mark flood-prone ground; 100% marks permanent rivers, lakes and reservoirs.',
+      legend: { type: 'ramp', min: 1, max: 100, labels: ['1%', '50%', '100%'], ends: ['Rarely wet', 'Always wet'] },
+    },
+    {
+      id: 'seasonality', short: 'Months', name: 'Months of Water (2024)', tag: 'Months of water · 2024', off: true,
+      when: '2024 only.',
+      desc: 'Number of months water was present during the most recent year. Short durations show monsoon and flood-season water.',
+      legend: { type: 'steps', min: 1, max: 12, labels: ['1 mo', '6', '12 months'] },
+    },
+    {
+      id: 'recurrence', short: 'Recurrence', name: 'Recurrence', tag: 'Inter-annual return · %', sourced: true,
+      when: 'All of 1984–2024 combined: the share of years with water.',
+      desc: 'How reliably water returns from year to year. High recurrence with low occurrence points to areas flooded every monsoon.',
+      legend: { type: 'ramp', min: 1, max: 100, labels: ['1%', '50%', '100%'], ends: ['Irregular', 'Every year'] },
+    },
+    {
+      id: 'change', short: 'Change', name: 'Occurrence Change', tag: '1984–99 vs 2000–24', sourced: true,
+      when: 'Two periods compared: 1984–99 and 2000–24.',
+      desc: 'Change in water occurrence between the two epochs. Red shows drying or loss; green shows new or more frequent water.',
+      legend: { type: 'ramp', min: 0, max: 200, labels: ['−100%', '0', '+100%'], ends: ['Loss', 'Gain'] },
+    },
+    {
+      // No card: the Permanent, Seasonal, Gained and Lost tabs of the Insights panel draw from these tiles
+      id: 'transitions', short: 'Transition', name: 'Water Transitions', tag: 'Class change · 1984 → 2024', card: false, sourced: true,
+      when: 'Two years compared: 1984 and 2024. It does not say when the change happened.',
+      desc: 'How each pixel changed between the first and last year: permanent, seasonal, new, lost and ephemeral water.',
+      legend: { type: 'classes' },
+    },
+    {
+      id: 'erosion', short: 'Erosion', name: 'River Erosion & Accretion', tag: 'Indus floodplain · 1980s → 2024',
+      when: '1984 compared with 2024, checked against 1984–99 and 2000–24. It does not say when the change happened.',
+      desc: 'Where the Indus took land and gave it back since the 1980s. Only sustained change counts, confirmed by comparing the same months in 1984–99 and 2000–24. Shown inside the Indus floodplain only.',
+      legend: { type: 'classes', classes: {
+        1: 'Land lost to permanent water', 2: 'Land turned seasonally wet', 3: 'Regained from permanent water',
+        4: 'Regained from seasonal water', 5: 'Water in both years', 6: 'Wet at times, no lasting change',
+      } },
+    },
+    {
+      // Earth Engine exports, 20 m: Sentinel-2 water in Nov-Jan of each period (backend/earth_engine/indus_land_change.js)
+      id: 'landloss', short: 'Land change', name: 'Land Loss & Deposition', tag: 'Sukkur reach · 20 m · 2018–19 → 2025–26', maxzoom: 13,
+      period: 'winter 2018–19 to winter 2025–26', years: 7,
+      when: 'Two winters compared: November–January of 2018–19 and of 2025–26.',
+      focus: [[68.45, 27.45], [69.15, 27.95]],
+      desc: 'Where the Indus moved near Sukkur between the winters of 2018–19 and 2025–26, from Sentinel-2 at low flow: land the channel took, and land left behind as it moved away. Covers about 100 km of river, inside the floodplain.',
+      legend: { type: 'classes', classes: { 1: 'Land lost to the river', 2: 'Land deposited', 3: 'Water in both' } },
+    },
+  ],
+
+  // Water sources: groups of water types (backend/pipeline/common.py WATER_GROUPS). Layers marked sourced: true have tiles for
+  // each, in tiles/source/<id>/; the Insights figures follow too.
+  sources: [
+    { id: 'all', name: 'All water', color: '#22d3ee', about: 'Everything the satellites saw' },
+    { id: 'river', name: 'River system', color: '#2f6fd6', about: 'River channels and canals, and the seasonal water of their beds: in the Indus floodplain or within 5 km of a mapped river' },
+    { id: 'flood', name: 'Floods and rain', color: '#f2c94c', about: 'Seasonal water away from rivers: floods, rain ponding and flooded fields' },
+    { id: 'lakes', name: 'Lakes and coast', color: '#9fd3ff', about: 'Lakes, reservoirs, coastal and tidal water' },
+  ],
+
+  // Transition class names, mirrors backend/pipeline/common.py
+  classes: {
+    1: 'Permanent', 2: 'New permanent', 3: 'Lost permanent', 4: 'Seasonal', 5: 'New seasonal',
+    6: 'Lost seasonal', 7: 'Seasonal → permanent', 8: 'Permanent → seasonal',
+    9: 'Ephemeral permanent', 10: 'Ephemeral seasonal',
+  },
+};

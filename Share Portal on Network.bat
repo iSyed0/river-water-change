@@ -16,7 +16,7 @@ echo.
 
 start "" /b cmd /c "timeout /t 2 /nobreak >nul & start "" http://127.0.0.1:8765"
 
-python serve.py 8765 --lan
+python backend\serve.py 8765 --lan
 echo.
 echo The server stopped. If port 8765 is already in use, the portal may already be running.
 pause

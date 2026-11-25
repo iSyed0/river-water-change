@@ -12,7 +12,7 @@ if errorlevel 1 (
 rem Open the browser a couple of seconds after the server starts
 start "" /b cmd /c "timeout /t 2 /nobreak >nul & start "" http://127.0.0.1:8765"
 
-python serve.py 8765
+python backend\serve.py 8765
 echo.
 echo The server stopped. If port 8765 is already in use, the portal may already be running.
 pause

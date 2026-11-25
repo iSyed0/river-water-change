@@ -1,35 +1,46 @@
-# JRC source rasters: public downloads, about 920 MB. The rendered tiles in portal/tiles are kept.
-/change/
-/extent/
-/occurrence/
-/recurrence/
-/seasonality/
-/transitions/
+# Project layout: frontend/ (the website), backend/ (server, pipeline, Earth Engine scripts), data/ (inputs and caches).
+# Kept in git from data/: boundaries/official/, derived/erosion/, earth_engine/indus_erosion/. The rest is below.
 
-# Downloads and build caches, about 1.7 GB; recreated by the scripts
-/build/
-/osm_src/
+# JRC Global Surface Water source rasters: public downloads, about 920 MB. The rendered tiles in frontend/tiles are kept.
+/data/jrc/
+
+# Downloads and build caches, about 1.7 GB; recreated by the pipeline
+/data/cache/
+/data/osm/
+
+# NDMA DSDI layers (schools, health facilities, embankments, districts): backend/pipeline/dsdi_data.py fetches them
+/data/dsdi/
 
 # Full-detail boundaries, about 600 MB: over GitHub's file limit. prepare_boundaries.py and prepare_admin_units.py read them.
-/boundries/
+/data/boundaries/admin/
 
-# Union council shapefile from the user (25 MB); prepare_admin_units.py turns it into portal/data/union_councils.geojson.
-/gcop_Union_Council/
+# Union council shapefile from the user (25 MB); prepare_admin_units.py turns it into frontend/data/union_councils.geojson.
+/data/boundaries/union_councils/
 
 # Earth Engine monthly exports (about 5 GB) and the monthly tiles made from them (about 480 MB, 62,000 files):
 # too large for GitHub. prepare_timeline.py rebuilds the tiles from the exports. The yearly tiles (47 MB) are kept.
-/ndma water monthly/
-/portal/tiles/monthly/
+/data/earth_engine/monthly/
+/data/earth_engine/yearly/
+/frontend/tiles/monthly/
 
-# Rebuilt by prepare_water_types.py; the rendered tiles in portal/tiles are kept
-/watertype/
+# Rebuilt by prepare_water_types.py; the rendered tiles in frontend/tiles are kept
+/data/derived/watertype/
+
+# Whole-country Occurrence Change gain files (about 950 MB): python backend/exports.py change --parts gain --area pakistan ...
+/data/derived/occurrence_change/
 
 # Not used by the portal
-/rivers/
+/data/unused/
+
+# Water source tiles, about 800 MB: rebuild with backend/pipeline/build_tiles.py --group river|flood|lakes
+/frontend/tiles/source/
+
+# Credentials: never commit
+/private/
+DSDI api key.txt
+DSDI login as guest.txt
 
 __pycache__/
 *.pyc
 desktop.ini
-
-# Water source tiles, about 800 MB: rebuild with scripts/build_tiles.py --group river|flood|lakes
-/portal/tiles/source/
+Thumbs.db
